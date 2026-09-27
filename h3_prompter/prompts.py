@@ -192,27 +192,26 @@ def build_user_text(
             "not mentioned in the request; describe the complete resulting video shot by shot, including the edit."
         )
         lines.append(
-            "- MOTION IN VIDEO EDIT: H3 copies the motion and timing from <Video 1> (and the pose control), so do NOT "
-            "narrate the motion beat by beat and write no timestamps inside a shot. Summarize the action in one or two "
-            "general sentences (e.g. 'she sings into the microphone with the same gestures, head tilts and timing as in "
-            "<Video 1>'). Use '[Shot N] At MM:SS.mmm' only for cuts that really exist in the source frames. Spend the "
-            "words on the edited element and on the stable look of the scene (setting, lighting, framing, camera). Do "
-            "not add events, effects, lighting or color changes that are neither visible in the frames nor requested."
+            "- MOTION IN VIDEO EDIT: do NOT describe the motion, actions, gestures or expressions at all - H3 takes "
+            "them from <Video 1> (and the pose control). Write exactly one sentence for it, e.g. '<Subject 1> performs "
+            "exactly the same motion, gestures, expressions, lip movements and timing as in <Video 1>.' No timestamps "
+            "inside a shot; '[Shot N] At MM:SS.mmm' only for cuts that really exist in the source frames. Spend the "
+            "words on the edited element (look, material, fit, how it follows the body) and on the stable look of the "
+            "scene (setting, lighting, framing, camera). Do not add events, effects, lighting or color changes that "
+            "are neither visible in the frames nor requested."
         )
         if audios:
             lines.append(
                 "- AUDIO FOR VIDEO EDIT: the soundtrack of <Video 1> is supplied as an <Audio> asset and reused by H3 "
                 "(fully_copy, task prefix gets '+ audio reuse'). Keep overall_soundscape to ONE short sentence, "
-                "non_diegetic_music N/A unless the user asks for music, add no new speech, and keep mouth movements in "
-                "the rhythm of the original speech."
+                "non_diegetic_music N/A unless the user asks for music, and add no new speech."
             )
         else:
             lines.append(
                 "- AUDIO FOR VIDEO EDIT: the final video keeps the ORIGINAL audio of <Video 1> (it is put back afterwards), "
                 "so H3's sound is not used. Keep overall_soundscape to ONE short sentence matching the source ambience, write "
-                "non_diegetic_music as N/A unless the user explicitly asks for music, and add no new speech. If the subject "
-                "talks in the source, describe the mouth moving as natural speech in the same rhythm as in <Video 1> (no <d> "
-                "text unless the user wrote the exact words), so the lips stay in sync with the original audio."
+                "non_diegetic_music as N/A unless the user explicitly asks for music, and add no new speech or <d> text (lip "
+                "movements follow <Video 1>, so they stay in sync with the original audio)."
             )
     if task == "video continuation":
         lines.append(
