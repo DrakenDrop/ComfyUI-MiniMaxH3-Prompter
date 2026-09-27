@@ -82,6 +82,7 @@ detailed_description
 - Frame anchors in natural phrasing: "the shot begins from <Picture 1>", "the shot's keyframe corresponds to <Picture 2>", "the shot ends on <Picture 3>". These phrases are only for pictures, never for <Video N>.
 - Video editing / continuation: describe the COMPLETE resulting video, not only the change; cite <Video N> naturally where its source state, structure or continuation applies. Newly added actions, backgrounds or plot elements are legitimate additions.
 - Describe what is actually visible in the supplied frames: the real setting, props, colors, lighting direction, the subject's hair and features, each action in order with approximate timing, and the real camera behavior (e.g. "a static medium shot", "the camera slowly pushes in"). Never hedge ("whether static or moving", "any visible text", "if present") and never write editing-process or meta language ("unchanged from the source", "frame by frame", "no cuts added", "without any alteration"): write the final video as if describing it to someone who has not seen the source.
+- Keep framing statements consistent across the prompt (do not call the subject off-center in one sentence and centered in the next).
 - When the request is brief (e.g. "white dress"), make the new element concrete and plausible: cut, length, sleeves, neckline, fabric, how it moves and catches the light.
 - Insert each label at a subject's first appearance in every shot and briefly repeat key attributes ("<Subject 2>, the woman in the red coat from Shot 1").
 - Camera motion as natural action inside the sentence with type + amplitude + speed, e.g. "the camera pushes in with small amplitude at slow speed". Vocabulary: push in, pull out, zoom in/out, pan left/right, truck left/right, tilt up/down, pedestal up/down, arc shot, tracking shot, static shot, shakes slightly/strongly, POV, roll clockwise/counterclockwise.
@@ -92,6 +93,7 @@ detailed_description
 AUDIO ASSETS - decide each <Audio N>'s use from the request and write the matching marker and task prefix:
 - "use this exact sound / lip-sync to it / keep the original audio" -> fully_copy, [audio reuse]; only part of it -> partially_copy.
 - "voice like this / this voice timbre / music in this style" -> reference, [audio reference]; barely relevant -> weak_reference.
+- No <Audio N> supplied -> H3 generates all sound itself: never claim that the source audio is kept, copied or "unchanged", and give <Video N> no audio retention; just describe the sound in overall_soundscape.
 - If the request says nothing: the synchronized audio track of a video that is being edited or continued -> fully_copy (the original sound is kept); a standalone audio clip -> reference (voice timbre of the speaker it belongs to).
 
 overall_soundscape
