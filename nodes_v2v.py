@@ -107,24 +107,6 @@ class MiniMaxH3V2VEditLLM:
                 "tooltip": "Optional EDITED frame 0: pinned at frame 0 and given as the last <Picture>. "
                            "Biggest consistency boost.",
             }),
-            "sam3_model": ("MODEL", {"tooltip": "SAM 3.1 from CheckpointLoaderSimple (sam3.1_multiplex_fp16.safetensors) "
-                                                 "-> text-prompted mask. Only the masked area is regenerated."}),
-            "sam3_clip": ("CLIP", {"tooltip": "CLIP output of the same SAM 3.1 CheckpointLoaderSimple."}),
-            "mask_prompt": ("STRING", {
-                "default": "",
-                "tooltip": "What to mask, in English, comma-separated (e.g. 'shirt, pants', 'person', 'red car'). "
-                           "Empty = preset default (outfit: clothes, replace person: person, background: person "
-                           "inverted), other presets: no mask.",
-            }),
-            "mask_invert": ("BOOLEAN", {"default": False,
-                                        "tooltip": "Regenerate everything EXCEPT the prompted object."}),
-            "mask_grow": ("INT", {"default": 12, "min": 0, "max": 128,
-                                  "tooltip": "Grow the mask by N pixels (room for longer sleeves, hair, shadows)."}),
-            "mask_threshold": ("FLOAT", {"default": 0.5, "min": 0.05, "max": 0.95, "step": 0.01}),
-            "mask_max_objects": ("INT", {"default": 8, "min": 1, "max": 64,
-                                         "tooltip": "Max objects SAM3 tracks in total (a pair of shoes = 2)."}),
-            "mask": ("MASK", {"tooltip": "Your own mask instead of SAM3 (1 = regenerate). Any length/size, fitted to "
-                                         "the H3 timeline and canvas."}),
             "audio_vae": ("VAE", {"tooltip": "MiniMax H3 audio VAE (only for reuse_audio)."}),
             "source_audio": ("AUDIO", {"tooltip": "Soundtrack of the source (for reuse_audio)."}),
             "reuse_audio": ("BOOLEAN", {
@@ -158,6 +140,25 @@ class MiniMaxH3V2VEditLLM:
             "context_size": ("INT", {"default": int(_CFG.get("context_size", 32768)), "min": 4096,
                                      "max": 262144, "step": 1024}),
             "max_tokens": ("INT", {"default": 2048, "min": 256, "max": 32768, "step": 64}),
+            # --- added later: keep NEW widgets at the END so saved workflows keep their widget values ---
+            "sam3_model": ("MODEL", {"tooltip": "SAM 3.1 from CheckpointLoaderSimple (sam3.1_multiplex_fp16.safetensors) "
+                                                 "-> text-prompted mask. Only the masked area is regenerated."}),
+            "sam3_clip": ("CLIP", {"tooltip": "CLIP output of the same SAM 3.1 CheckpointLoaderSimple."}),
+            "mask_prompt": ("STRING", {
+                "default": "",
+                "tooltip": "What to mask, in English, comma-separated (e.g. 'shirt, pants', 'person', 'red car'). "
+                           "Empty = preset default (outfit: clothes, replace person: person, background: person "
+                           "inverted), other presets: no mask.",
+            }),
+            "mask_invert": ("BOOLEAN", {"default": False,
+                                        "tooltip": "Regenerate everything EXCEPT the prompted object."}),
+            "mask_grow": ("INT", {"default": 12, "min": 0, "max": 128,
+                                  "tooltip": "Grow the mask by N pixels (room for longer sleeves, hair, shadows)."}),
+            "mask_threshold": ("FLOAT", {"default": 0.5, "min": 0.05, "max": 0.95, "step": 0.01}),
+            "mask_max_objects": ("INT", {"default": 8, "min": 1, "max": 64,
+                                         "tooltip": "Max objects SAM3 tracks in total (a pair of shoes = 2)."}),
+            "mask": ("MASK", {"tooltip": "Your own mask instead of SAM3 (1 = regenerate). Any length/size, fitted to "
+                                         "the H3 timeline and canvas."}),
         })
         return {"required": required, "optional": optional}
 
