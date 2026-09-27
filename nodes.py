@@ -157,6 +157,16 @@ class MiniMaxH3R2VPrompter:
                 "default": 2.5, "min": 0.0, "max": 15.1, "step": 0.05,
                 "tooltip": "Detik ke berapa keyframe_picture harus muncul persis (dibulatkan ke frame @24fps).",
             }),
+            "shots": (["auto", "1", "2", "3", "4", "5", "6"], {
+                "default": "auto",
+                "tooltip": "Jumlah shot. auto = LLM membuat storyboard sendiri dari prompt sederhana (potongan shot + "
+                           "waktunya). Tidak dipakai untuk video editing (shot mengikuti video asli).",
+            }),
+            "timed_beats": ("BOOLEAN", {
+                "default": False,
+                "tooltip": "LLM juga menulis waktu aksi di dalam shot (mis. 'At 1.5 s she turns'). Eksperimental - bukan "
+                           "format resmi H3. Diabaikan untuk video editing.",
+            }),
         })
         return {"required": required, "optional": optional}
 
@@ -310,6 +320,7 @@ class MiniMaxH3R2VPrompter:
 
         user_text = prompts.build_user_text(
             instruction=instruction, task=task, keyframe=keyframe,
+            shots=str(kw.get("shots", "auto")), timed_beats=bool(kw.get("timed_beats", False)),
             frame_anchor=("none" if kw.get("_ff_label") else frame_anchor), first_frame_label=kw.get("_ff_label"),
             duration_s=eff, frames=frames,
             pictures=pics, videos=vids, audios=auds, length=length,
@@ -354,7 +365,8 @@ class MiniMaxH3R2VPrompter:
         content, reasoning, timings = self._run(
             server_url, base, system, user, thinking, timeout, print_tokens, on_token)
 
-        prompt = prompts.clean_output(content)
+        prompt = prompts.clean_output(
+            content, keep_timed_beats=bool(kw.get("timed_beats", False)) and task != "video editing")
         dt = time.time() - t0
         tps = timings.get("predicted_per_second")
         lc.log(

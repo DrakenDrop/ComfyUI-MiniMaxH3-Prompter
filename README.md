@@ -149,6 +149,15 @@ V2V Edit + LLM.latent ─────> SamplerCustomAdvanced → VAEDecode (H3 v
 
 Kalau kamu tetap memakai node V2V Edit yang lama, sambungkan `prompt` dari prompter ke `prompt_override`. Labelnya sama (`ref_image` → `<Picture 1..n>`, `first_frame` → `<Picture>` terakhir, sumber → `<Video 1>`). Lewatkan videonya dulu ke Conform Video, supaya kedua node menerima frame yang sama.
 
+## Storyboard otomatis dari prompt sederhana (shots + timed_beats)
+
+Cukup tulis prompt singkat, misalnya `kucing melompat ke meja lalu tidur`. Prompter yang menyusun storyboard-nya:
+
+- **`shots`** = `auto` (default): LLM menentukan sendiri jumlah shot (±1 shot per 2,5–5 detik), framing dan gerak kamera tiap shot, serta **waktu setiap potongan** (`[Shot 2] At 00:03.200, …`) supaya ceritanya pas dengan durasi.
+- `shots` = `1` … `6`: jumlah shot dikunci, tapi LLM tetap memilih kapan potongannya. `1` berarti satu shot panjang tanpa potongan.
+- **`timed_beats`** = on: di dalam tiap shot, aksi utamanya juga diberi detik (mis. "At 1.5 s it jumps; at 3.0 s it lands"). Ini eksperimental karena bukan format resmi H3; coba bandingkan hasilnya.
+- Untuk **video editing**, kedua opsi ini diabaikan, karena shot dan gerakan mengikuti video asli.
+
 ## Keyframe di tengah video (keyframe_picture + keyframe_seconds)
 
 Selain frame pertama/terakhir (`frame_anchor`), gambar mana pun bisa dikunci di detik tertentu:

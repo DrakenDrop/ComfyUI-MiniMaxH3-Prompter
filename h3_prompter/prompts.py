@@ -78,7 +78,7 @@ retention_analysis
 
 detailed_description
 - First sentence: visual style (e.g. live-action cinematic, realistic sitcom, 3D animation, anime) and lighting.
-- Shots in playback order: "[Shot 1] ..." with no timestamp, later cuts "[Shot N] At MM:SS.mmm, the shot cuts to ...". Timestamps strictly increase and stay below the target duration. Prefer few shots (about one per 3-5 seconds); one continuous shot is fine for short clips. Timestamps appear ONLY in that "[Shot N] At MM:SS.mmm" cut syntax: never write in-shot timestamps such as "At 0.5 s", "at 2 seconds" or "around 3.0 s".
+- Shots in playback order: "[Shot 1] ..." with no timestamp, later cuts "[Shot N] At MM:SS.mmm, the shot cuts to ...". Timestamps strictly increase and stay below the target duration. Prefer few shots (about one per 3-5 seconds); one continuous shot is fine for short clips. Timestamps appear ONLY in that "[Shot N] At MM:SS.mmm" cut syntax: never write in-shot timestamps such as "At 0.5 s", "at 2 seconds" or "around 3.0 s" unless the request explicitly asks for TIMED BEATS.
 - Frame anchors in natural phrasing: "the shot begins from <Picture 1>", "the shot's keyframe corresponds to <Picture 2>", "the shot ends on <Picture 3>". These phrases are only for pictures, never for <Video N>.
 - Video editing / continuation: describe the COMPLETE resulting video, not only the change; cite <Video N> naturally where its source state, structure or continuation applies. Newly added actions, backgrounds or plot elements are legitimate additions.
 - Describe what is actually visible in the supplied frames: the real setting, props, colors, lighting direction, the subject's hair and features, the main actions in order, and the real camera behavior (e.g. "a static medium shot", "the camera slowly pushes in"). Never hedge ("whether static or moving", "any visible text", "if present") and never write editing-process or meta language ("unchanged from the source", "frame by frame", "no cuts added", "without any alteration"): write the final video as if describing it to someone who has not seen the source.
@@ -118,6 +118,8 @@ def build_user_text(
     duration_s: float,
     first_frame_label: str | None = None,
     keyframe: tuple | None = None,
+    shots: str = "auto",
+    timed_beats: bool = False,
     frames: int,
     pictures: list[str],
     videos: list[str],
@@ -169,6 +171,32 @@ def build_user_text(
             f"to retention_analysis, start [Shot 1] with \"the shot begins from {first_frame_label}\", and describe the new "
             "element exactly as it looks in that frame."
         )
+    editing = task == "video editing"
+    if not editing:
+        if shots == "auto":
+            lines.append(
+                "- SHOT PLAN (you decide): turn the request into a small storyboard. Choose the number of shots from the "
+                "action (about one shot per 2.5-5 s; one continuous shot if the action is simple), give each shot its own "
+                "framing and camera move, and time every cut with '[Shot N] At MM:SS.mmm' so the story fits the target "
+                "duration."
+            )
+        else:
+            n = int(shots)
+            if n == 1:
+                lines.append("- SHOT PLAN: exactly ONE continuous shot ([Shot 1] only, no cuts); express the progression "
+                             "through action and camera movement.")
+            else:
+                lines.append(
+                    f"- SHOT PLAN: exactly {n} shots. You choose where each cut falls (at a natural beat of the action, "
+                    f"every shot at least about 1 s long) and write the cuts as '[Shot N] At MM:SS.mmm'; give each "
+                    "shot its own framing and camera move."
+                )
+        if timed_beats:
+            lines.append(
+                "- TIMED BEATS: inside each shot, time the key actions with explicit seconds of the target video, "
+                "e.g. 'At 1.5 s she turns toward the window; at 3.0 s she smiles.' Keep every time inside the shot's "
+                "span and below the target duration."
+            )
     if keyframe:
         kf_label, kf_t, kf_idx = keyframe
         if "[keyframe completion]" not in tags:
@@ -307,7 +335,7 @@ def _strip_inshot_timestamps(t: str) -> str:
     return "\n".join(out)
 
 
-def clean_output(text: str) -> str:
+def clean_output(text: str, keep_timed_beats: bool = False) -> str:
     t = text.strip()
     t = _FENCE.sub("", t).strip()
     # drop anything before the first section header (preambles)
@@ -316,7 +344,8 @@ def clean_output(text: str) -> str:
         t = t[idx:]
     t = _SHOT1_TS.sub("[Shot 1] ", t)
     t = re.sub(r"(\[Shot 1\] )([a-z])", lambda m: m.group(1) + m.group(2).upper(), t)
-    t = _strip_inshot_timestamps(t)
+    if not keep_timed_beats:
+        t = _strip_inshot_timestamps(t)
     t = _BAD_LANG.sub(lambda m: f"<d>[{m.group(1)}] ", t)
     t = _SHOT_TS.sub(_fix_ts, t)
     # one blank line between sections
