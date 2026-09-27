@@ -78,24 +78,50 @@ Output node:
 
 Pakai node **Preview Any** untuk melihat prompt yang dihasilkan.
 
-## Dipakai bersama MiniMax H3 V2V Edit (Minimax-H3-V2V)
+## MiniMax H3 V2V Edit + LLM (satu node untuk edit video)
 
-Prompter ini bisa menggantikan pembuat prompt bawaan [Minimax-H3-V2V](https://github.com/DrakenDrop/Minimax-H3-V2V). Labelnya sudah sama: `ref_image_*` → `<Picture 1..n>`, `first_frame` → `<Picture>` terakhir, video sumber → `<Video 1>`.
+Node **MiniMax H3 V2V Edit + LLM (Fun ControlNet)** menggabungkan V2V Edit ([Minimax-H3-V2V](https://github.com/DrakenDrop/Minimax-H3-V2V)) dengan prompter ini, jadi prompt-nya ditulis oleh LLM lokal yang melihat frame videonya sendiri.
+
+**Preset `edit_mode`** (masing-masing punya aturan prompt dan kekuatan pose/depth/edge sendiri):
+
+| preset | untuk | pose / depth / edge (release) |
+|---|---|---|
+| `change_outfit` | ganti baju (outfit swap) | 0.85 / 0.30 / 0 (0.40) |
+| `replace_person` | ganti orang | 1.00 / 0 / 0 (0.40) |
+| `add_object` | tambah objek | 0.80 / 0.20 / 0 (0.30) |
+| `add_subject` | tambah orang/hewan/karakter | 0.80 / 0 / 0 (0.30) |
+| `remove_object` | hapus objek (baru) | 0.80 / 0.20 / 0 (0.30) |
+| `change_background` | ganti latar (baru) | 0.95 / 0 / 0 (0.30) |
+| `restyle` | ubah gaya visual | 0.60 / 0.50 / 0.30 (0.70) |
+| `custom` | edit apa saja lewat instruction | 0.90 / 0.30 / 0 (0.50) |
+
+- **instruction** boleh kosong kalau ada gambar referensi. Tiap preset punya instruksi default, misalnya "put the outfit from the reference on the person".
+- Frame yang dilihat LLM sama persis dengan yang dipakai H3 (sudah 24 fps, dipotong, dan di-resize di dalam node), jadi timestamp prompt selalu cocok.
+- Prompt di-cache: kalau hanya `motion_lock`, strength, atau setting sampler yang diubah, LLM tidak dijalankan ulang.
+- `prompt_override` diisi → LLM dilewati.
+- `unload_llm_after_prompt` → llama-server dimatikan setelah prompt jadi, supaya VRAM-nya bebas untuk sampling.
+- Resolusi: aspect ratio mengikuti video sumber (sisi pendek 768, maks 768×1344, kelipatan 32).
+- Preset `remove_object` dan `change_background` masih baru: kekuatan ControlNet-nya belum teruji, jadi atur `motion_lock` / strength manual kalau hasilnya kurang pas.
+
+**Sambungan:**
 
 ```
-Load Video → MiniMax H3 V2V Conform Video ──images──┬──> V2V Edit.source_video (source_fps 24, start 0)
-                                                    ├──> Prompter.video_1
-                                                    └──> pose / depth / canny preprocessors → control_*
-Foto referensi ─────────────────────────────────────┬──> V2V Edit.ref_image_0
-                                                    └──> Prompter.image_1
-Frame 0 yang sudah diedit (opsional) ───────────────┬──> V2V Edit.first_frame
-                                                    └──> Prompter.first_frame
-Prompter.prompt ──────────────────────────────────────> V2V Edit.prompt_override
+Load Video → Get Video Components ──images──┬──> V2V Edit + LLM.source_video   (fps → source_fps)
+                                            └──> MiniMax H3 Conform Video (24 fps) → pose/depth/canny → control_*
+UNETLoader (ref2va) → LoRA turbo ────────────> V2V Edit + LLM.model
+CLIPLoader (minimax) / VAELoader ────────────> clip / vae
+ModelPatchLoader (Fun ControlNet-Union) ─────> model_patch
+Foto referensi ──────────────────────────────> ref_image_1 (… ref_image_8)
+
+V2V Edit + LLM.model ───┬──> BasicGuider.model ──┐
+                        └──> BasicScheduler.model │
+V2V Edit + LLM.positive ───> BasicGuider.conditioning
+RandomNoise + KSamplerSelect (res_multistep) + BasicScheduler (simple, 4 step turbo / 20 tanpa LoRA)
+V2V Edit + LLM.latent ─────> SamplerCustomAdvanced → VAEDecode (H3 video VAE)
+                            → CreateVideo (24 fps, audio = Conform.audio) → SaveVideo
 ```
 
-- Prompter: `task = video editing`, `duration_seconds = 0`, dan pilih mmproj (wajib supaya LLM melihat videonya).
-- V2V Edit: `use_source_as_reference = true`, `start_seconds = 0` (pemotongan dilakukan di Conform Video), dan `source_fps = 24`.
-- Karena kedua node menerima frame yang sama, durasi dan timestamp di prompt sama persis dengan yang dipakai H3.
+Kalau kamu tetap memakai node V2V Edit yang lama, sambungkan `prompt` dari prompter ke `prompt_override`. Labelnya sama (`ref_image` → `<Picture 1..n>`, `first_frame` → `<Picture>` terakhir, sumber → `<Video 1>`). Lewatkan videonya dulu ke Conform Video, supaya kedua node menerima frame yang sama.
 
 ## Contoh pemakaian
 
