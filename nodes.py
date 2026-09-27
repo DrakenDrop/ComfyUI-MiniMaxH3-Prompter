@@ -232,7 +232,8 @@ class MiniMaxH3R2VPrompter:
             for k in list(kw):
                 if (k.startswith("image_") or k.startswith("video_")) and k[6:].isdigit():
                     if kw[k] is not None:
-                        lc.log("text-only model: pictures/videos are labeled in the prompt but not shown to the LLM.")
+                        lc.log("WARNING: text-only model (no mmproj) - the LLM cannot SEE the pictures/videos, so it "
+                               "will describe them generically. Pick the model's mmproj for good edit prompts.")
                         kw["_text_only"] = True
                         break
 

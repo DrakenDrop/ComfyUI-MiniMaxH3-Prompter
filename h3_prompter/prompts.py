@@ -73,13 +73,16 @@ retention_analysis
 - Video entries: e.g. "<Video 1> (motion, camera and timing): fully_preserved - ..." or "<Video 1> (cut and pacing structure): weak_reference - ...".
 - Visual markers: fully_preserved, partially_preserved, attribute_transfer, weak_reference.
 - Audio markers: fully_copy (exact reuse, lips sync to it), partially_copy, reference (timbre/style only), weak_reference. Use the marker given in the request for each audio asset.
-- For edits, everything the user did not ask to change is preserved; name exactly what changes (partially_preserved / attribute_transfer).
+- For edits, everything the user did not ask to change is preserved; name exactly what is kept and what changes.
+- Marker choice for edits: a subject whose identity stays but whose clothing/hair/color changes -> partially_preserved. attribute_transfer only when an attribute is taken from ANOTHER reference asset (e.g. the dress in <Picture 1> put on <Subject 1> from <Video 1>).
 
 detailed_description
 - First sentence: visual style (e.g. live-action cinematic, realistic sitcom, 3D animation, anime) and lighting.
 - Shots in playback order: "[Shot 1] ..." with no timestamp, later cuts "[Shot N] At MM:SS.mmm, the shot cuts to ...". Timestamps strictly increase and stay below the target duration. Prefer few shots (about one per 3-5 seconds); one continuous shot is fine for short clips.
-- Frame anchors in natural phrasing: "the shot begins from <Picture 1>", "the shot's keyframe corresponds to <Picture 2>", "the shot ends on <Picture 3>".
+- Frame anchors in natural phrasing: "the shot begins from <Picture 1>", "the shot's keyframe corresponds to <Picture 2>", "the shot ends on <Picture 3>". These phrases are only for pictures, never for <Video N>.
 - Video editing / continuation: describe the COMPLETE resulting video, not only the change; cite <Video N> naturally where its source state, structure or continuation applies. Newly added actions, backgrounds or plot elements are legitimate additions.
+- Describe what is actually visible in the supplied frames: the real setting, props, colors, lighting direction, the subject's hair and features, each action in order with approximate timing, and the real camera behavior (e.g. "a static medium shot", "the camera slowly pushes in"). Never hedge ("whether static or moving", "any visible text", "if present") and never write editing-process or meta language ("unchanged from the source", "frame by frame", "no cuts added", "without any alteration"): write the final video as if describing it to someone who has not seen the source.
+- When the request is brief (e.g. "white dress"), make the new element concrete and plausible: cut, length, sleeves, neckline, fabric, how it moves and catches the light.
 - Insert each label at a subject's first appearance in every shot and briefly repeat key attributes ("<Subject 2>, the woman in the red coat from Shot 1").
 - Camera motion as natural action inside the sentence with type + amplitude + speed, e.g. "the camera pushes in with small amplitude at slow speed". Vocabulary: push in, pull out, zoom in/out, pan left/right, truck left/right, tilt up/down, pedestal up/down, arc shot, tracking shot, static shot, shakes slightly/strongly, POV, roll clockwise/counterclockwise.
 - Speakers get stable IDs (S1), (S2) reused everywhere, with a short voice description at their first line. Speech: <d>[Language] exact words</d>, e.g. <d>[English] Hey! Watch your dog!</d> or <d>[Indonesian] Ayo cepat!</d>; the square brackets are literal. Keep the user's dialogue verbatim - never translate, paraphrase, shorten or merge it. Do not invent dialogue unless the request allows it. After a line, state that the speaker closes the mouth or continues an action.
