@@ -1,0 +1,20 @@
+{
+  "server_url": "http://127.0.0.1:8080",
+  "model_alias": "qwen3.8-27b",
+  "request_timeout_seconds": 600,
+
+  "autostart": false,
+  "llama_server_path": "C:\\llama.cpp\\llama-server.exe",
+  "llama_server_args": [
+    "-hf", "unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL",
+    "--jinja",
+    "-ngl", "999",
+    "-c", "32768",
+    "-np", "1",
+    "--no-mmap",
+    "--host", "127.0.0.1",
+    "--port", "8080",
+    "--alias", "qwen3.8-27b"
+  ],
+  "startup_wait_seconds": 900
+}
