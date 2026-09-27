@@ -186,19 +186,60 @@ def ensure(model_path: str, mmproj_path: str | None, ctx: int, cfg: dict) -> str
             "--alias", os.path.splitext(os.path.basename(model_path))[0], *[str(a) for a in args]]
     lc.log("starting llama-server: " + " ".join(f'"{c}"' if " " in c else c for c in cmd))
 
-    kwargs: dict = {}
+    # every platform logs to llama-server.log, so a failed start can be diagnosed from the error itself
+    log_fh = open(_LOG_PATH, "wb")  # noqa: SIM115  (fresh log per start)
+    log_fh.write(("$ " + " ".join(cmd) + "\n").encode("utf-8", "replace"))
+    log_fh.flush()
+    kwargs: dict = {"stdout": log_fh, "stderr": subprocess.STDOUT, "stdin": subprocess.DEVNULL}
     if os.name == "nt":
-        # own console window: shows llama.cpp logs and survives ComfyUI restarts (model stays in VRAM)
-        kwargs["creationflags"] = subprocess.CREATE_NEW_CONSOLE  # type: ignore[attr-defined]
+        # no console window; detached so it survives ComfyUI restarts (model stays in VRAM)
+        kwargs["creationflags"] = (subprocess.CREATE_NO_WINDOW  # type: ignore[attr-defined]
+                                   | subprocess.CREATE_NEW_PROCESS_GROUP)  # type: ignore[attr-defined]
     else:
         kwargs["start_new_session"] = True
-        log_fh = open(_LOG_PATH, "ab")  # noqa: SIM115
-        kwargs["stdout"] = log_fh
-        kwargs["stderr"] = subprocess.STDOUT
     _proc = subprocess.Popen(cmd, **kwargs)
     _write_state({"pid": _proc.pid, "sig": want, "port": int(port), "cmd": cmd})
 
     return _wait_ready(url, model_path, cfg, proc=_proc)
+
+
+_HINTS = [
+    (("unknown model architecture", "unknown architecture"),
+     "build llama.cpp terlalu lama untuk arsitektur model ini -> update llama.cpp ke release terbaru."),
+    (("couldn't bind", "address already in use", "bind:"),
+     "port sudah dipakai -> matikan server lain di port itu atau ganti 'managed_port' di config.json."),
+    (("out of memory", "cudamalloc failed", "failed to allocate", "unable to allocate"),
+     "VRAM tidak cukup -> kecilkan context_size, pakai quant lebih kecil, atau bebaskan VRAM."),
+    (("failed to load mmproj", "clip_init: failed", "failed to load multimodal", "mtmd_init_from_file: error",
+      "failed to load vision"),
+     "mmproj tidak cocok / tidak didukung -> pilih mmproj lain atau 'none (text only)'."),
+    (("error while handling argument", "invalid argument", "unknown argument", "error: invalid"),
+     "argumen tidak dikenal oleh build llama.cpp ini -> update llama.cpp atau ubah 'managed_server_args' di config.json."),
+    (("failed to load model", "error loading model", "gguf_init", "invalid magic"),
+     "file model tidak bisa dibaca (rusak / belum selesai download / format tidak didukung build ini)."),
+    (("no such file", "cannot open shared object", "libcuda", "libcudart"),
+     "library CUDA atau file tidak ditemukan -> pakai build llama.cpp yang cocok dengan CUDA di mesin ini."),
+]
+
+
+def _log_tail(n: int = 25) -> str:
+    try:
+        with open(_LOG_PATH, "rb") as fh:
+            lines = fh.read().decode("utf-8", "replace").splitlines()
+        return "\n".join(lines[-n:])
+    except OSError:
+        return ""
+
+
+def _explain_failure(code) -> str:
+    tail = _log_tail()
+    low = tail.lower()
+    hint = next((h for keys, h in _HINTS if any(k in low for k in keys)), None)
+    msg = f"llama-server berhenti (exit code {code}) saat start."
+    if hint:
+        msg += f" Kemungkinan: {hint}"
+    msg += f"\nLog lengkap: {_LOG_PATH}\n--- akhir log ---\n{tail or '(kosong)'}"
+    return msg
 
 
 def _wait_ready(url: str, model_path: str, cfg: dict, proc) -> str:
@@ -210,13 +251,8 @@ def _wait_ready(url: str, model_path: str, cfg: dict, proc) -> str:
             lc.log(f"llama-server ready in {time.time() - t0:.0f}s ({os.path.basename(model_path)}).")
             return url
         if proc is not None and proc.poll() is not None:
-            where = "jendela console llama-server" if os.name == "nt" else _LOG_PATH
             _write_state({})
-            raise lc.ServerError(
-                f"llama-server berhenti (exit code {proc.returncode}) saat memuat model. Lihat {where}. "
-                "Penyebab umum: file mmproj tidak cocok dengan model, build llama.cpp terlalu lama untuk arsitektur "
-                "model ini, atau VRAM penuh."
-            )
+            raise lc.ServerError(_explain_failure(proc.returncode))
         if lc._interrupted():
             lc._raise_if_interrupted()
         if time.time() - last_note > 15:
