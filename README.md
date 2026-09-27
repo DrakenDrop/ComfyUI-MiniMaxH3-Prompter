@@ -72,7 +72,7 @@ Pakai node **Preview Any** untuk melihat prompt yang dihasilkan.
 
 ## Contoh pemakaian
 
-**Edit video:** `task = video editing`, `duration_seconds = 0` (ikut panjang video, dipotong ke 17k+5 seperti node H3), `video_1` = frame video, `video_1_audio` = audionya dengan `exact reuse / lip-sync (fully_copy)`.
+**Edit video:** `task = video editing`, `duration_seconds = 0` (ikut panjang video, dipotong ke 17k+5 seperti node H3), `video_1` = frame video, `video_1_audio` = audionya. Suara asli otomatis dipakai ulang (fully_copy) kecuali instruksi bilang lain.
 Instruksi: `ganti jaket pria jadi kulit hitam, latar jadi malam hujan`.
 
 **Reference 1 sebagai frame pertama:** `frame_anchor = reference 1 = first frame`, `image_1` = frame awal, `image_2` = wajah karakter, `image_3` = baju.
@@ -89,6 +89,9 @@ Instruksi: `ganti jaket pria jadi kulit hitam, latar jadi malam hujan`.
 - Batas H3: **24 fps**, maksimal **362 frame (~15 detik)**. Video yang lebih panjang dipotong dari awal. Load video dengan `force_rate = 24`.
 - Seed yang sama dengan input yang sama tidak akan dijalankan ulang (cache ComfyUI).
 
-## Sampling
+## Instruction vs system prompt
 
-`qwen recommended` = rekomendasi Qwen3.8 untuk mode non-thinking (temp 0.7, top_p 0.8, top_k 20, presence_penalty 1.5), atau mode thinking (1.0 / 0.95 / 20 / 0). Pilih `custom` kalau mau mengatur sendiri.
+- **instruction** = user prompt: apa yang kamu mau, dalam bahasa apa saja. Peran audio dan musik juga ditulis di sini, misalnya "pakai suara di Audio 1 persis, lip-sync", "suaranya seperti Audio 1", "tanpa musik", atau "musik piano pelan".
+- **System prompt** sudah tertanam di node (aturan resmi MiniMax H3) dan tidak perlu kamu tulis.
+- Kalau instruksi tidak menyebut audio: soundtrack video yang diedit dipakai ulang persis, dan audio mandiri dipakai sebagai referensi timbre suara. Kalau tidak menyebut musik: musik hanya ditambahkan kalau cocok dengan adegannya.
+- Sampling diatur otomatis: rekomendasi Qwen untuk model Qwen, dan setelan netral untuk model lain. Ganti `seed` untuk mendapat variasi.

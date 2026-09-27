@@ -34,14 +34,6 @@ FRAME_ANCHORS = [
     "reference 1 = first frame + last reference = last frame",
 ]
 
-AUDIO_USE = {
-    "voice timbre only (reference)": "reference",
-    "exact reuse / lip-sync (fully_copy)": "fully_copy",
-    "partial reuse (partially_copy)": "partially_copy",
-    "music style only (reference)": "reference",
-    "weak reference": "weak_reference",
-}
-
 SYSTEM_PROMPT_R2V = """You are an expert prompt writer for MiniMax H3, an audiovisual video generation model, in Full-Reference mode. You convert a user's request plus labeled reference assets into ONE final H3 prompt that follows the official MiniMax H3 Full-Reference prompt-writing guide.
 
 OUTPUT FORMAT - exactly these six sections, in this order, each header on its own line followed by its content:
@@ -94,11 +86,17 @@ detailed_description
 - Visible on-screen text in English double quotes, verbatim.
 - Concrete, visible actions and physical detail; no abstract mood words. Speech must fit the time (about 2.5 words per second).
 
+AUDIO ASSETS - decide each <Audio N>'s use from the request and write the matching marker and task prefix:
+- "use this exact sound / lip-sync to it / keep the original audio" -> fully_copy, [audio reuse]; only part of it -> partially_copy.
+- "voice like this / this voice timbre / music in this style" -> reference, [audio reference]; barely relevant -> weak_reference.
+- If the request says nothing: the synchronized audio track of a video that is being edited or continued -> fully_copy (the original sound is kept); a standalone audio clip -> reference (voice timbre of the speaker it belongs to).
+
 overall_soundscape
 - 1-4 sentences: ambience, action sounds, non-verbal human sounds. Never repeat dialogue or describe music here.
 
 non_diegetic_music
-- 1-3 sentences: instruments, tempo, rhythm, dynamics - no emotional adjectives. N/A when there is no background score.
+- 1-3 sentences: instruments, tempo, rhythm, dynamics - no emotional adjectives.
+- Follow the request: music asked for -> describe it; no music / silence asked for -> N/A; nothing said -> a short score only if it clearly suits the scene, otherwise N/A.
 
 LANGUAGE
 - The user may write in any language (often Indonesian). Write every section in English, except dialogue/lyrics inside <d>...</d>.
@@ -119,7 +117,6 @@ def build_user_text(
     audios: list[str],
     length: str,
     allow_invented_dialogue: bool,
-    music: str,
     asset_notes: str,
     extra_rules: str,
 ) -> str:
@@ -200,10 +197,6 @@ def build_user_text(
         if allow_invented_dialogue
         else "- Dialogue: only use speech the user wrote (or speech kept from a source video/audio); otherwise no speech."
     )
-    lines.append({
-        "none": "- Music: non_diegetic_music must be N/A.",
-        "auto": "- Music: add a short background score only if it suits the scene, otherwise N/A.",
-    }.get(music, "- Music: include a background score."))
     lines += ["", "ASSETS (use exactly these labels, connected in this order to the H3 node)"]
     if not (pictures or videos or audios):
         lines.append("- none")

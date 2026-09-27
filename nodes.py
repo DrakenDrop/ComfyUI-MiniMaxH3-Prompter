@@ -31,7 +31,6 @@ SAMPLING = {
     "on": dict(temperature=1.0, top_p=0.95, top_k=20, min_p=0.0, presence_penalty=0.0),
 }
 FIRST_FIELD = "subject_definitions:"
-AUDIO_USES = list(prompts.AUDIO_USE.keys())
 
 
 class MiniMaxH3R2VPrompter:
@@ -93,7 +92,6 @@ class MiniMaxH3R2VPrompter:
                 "tooltip": "Panjang detailed_description. compact ~150-250 kata (paling cepat), "
                            "standard 350-500 kata (pedoman resmi), detailed 500-700.",
             }),
-            "music": (["auto", "none", "include"], {"default": "auto"}),
             "allow_invented_dialogue": ("BOOLEAN", {"default": False}),
             "max_tokens": ("INT", {"default": 2048, "min": 256, "max": 32768, "step": 64}),
             "seed": ("INT", {"default": 0, "min": 0, "max": 0xFFFFFFFF}),
@@ -111,10 +109,8 @@ class MiniMaxH3R2VPrompter:
             optional[f"video_{i}_audio"] = ("AUDIO", {
                 "tooltip": "Soundtrack video ini (sama dengan ref_video_audio_N di node H3).",
             })
-            optional[f"video_{i}_audio_use"] = (AUDIO_USES, {"default": "exact reuse / lip-sync (fully_copy)"})
         for i in range(1, MAX_AUDIOS + 1):
             optional[f"audio_{i}"] = ("AUDIO", {"tooltip": "Audio mandiri (sama dengan ref_audio_N di node H3)."})
-            optional[f"audio_{i}_use"] = (AUDIO_USES, {"default": "voice timbre only (reference)"})
         optional.update({
             "asset_notes": ("STRING", {
                 "multiline": True, "default": "",
@@ -134,11 +130,6 @@ class MiniMaxH3R2VPrompter:
                 "default": 768, "min": 256, "max": 2048, "step": 64,
                 "tooltip": "Gambar diperkecil sebelum dikirim ke LLM (tidak mempengaruhi H3). Lebih kecil = lebih cepat.",
             }),
-            "sampling": (["qwen recommended", "custom"], {"default": "qwen recommended"}),
-            "temperature": ("FLOAT", {"default": 0.7, "min": 0.0, "max": 2.0, "step": 0.05}),
-            "top_p": ("FLOAT", {"default": 0.8, "min": 0.0, "max": 1.0, "step": 0.01}),
-            "top_k": ("INT", {"default": 20, "min": 0, "max": 200}),
-            "presence_penalty": ("FLOAT", {"default": 1.5, "min": 0.0, "max": 2.0, "step": 0.05}),
             "context_size": ("INT", {
                 "default": int(_CFG.get("context_size", 32768)), "min": 4096, "max": 262144, "step": 1024,
                 "tooltip": "Context llama-server yang dijalankan node (mengganti nilai ini me-restart server).",
@@ -153,21 +144,13 @@ class MiniMaxH3R2VPrompter:
 
     # ------------------------------------------------------------------ helpers
     @staticmethod
-    def _audio_line(label: str, audio, use: str, soundtrack_of: str | None = None) -> str:
-        marker = prompts.AUDIO_USE.get(use, "reference")
+    def _audio_line(label: str, audio, soundtrack_of: str | None = None) -> str:
         d = media.audio_duration(audio)
         dur = f"{d:.2f} s " if d else ""
         if soundtrack_of:
-            role = f"the synchronized audio track of {soundtrack_of}"
-            role += ", reused in the target video ([audio reuse])" if marker in ("fully_copy", "partially_copy") \
-                else ", used only as a timbre/style reference ([audio reference])"
-        elif use.startswith("music style"):
-            role = "a music-style reference ([audio reference])"
-        elif marker in ("fully_copy", "partially_copy"):
-            role = "audio reused in the target video ([audio reuse]); its role is described in the request"
-        else:
-            role = "a voice-timbre / style reference ([audio reference]); its role is described in the request"
-        return f"{label}: {dur}audio clip (not shown) - {role}. Retention marker: {marker}."
+            return (f"{label}: {dur}synchronized audio track of {soundtrack_of} (not shown). "
+                    "Choose its use and marker from the request.")
+        return f"{label}: {dur}standalone audio clip (not shown). Choose its role, use and marker from the request."
 
     def _collect_assets(self, kw, target_frames, video_fps, video_side, max_side):
         parts: list[dict] = []
@@ -207,11 +190,7 @@ class MiniMaxH3R2VPrompter:
             if soundtrack is not None:
                 # core node emits the soundtrack's <Audio j> right before its <Video k>
                 aud_n += 1
-                aud_desc.append(self._audio_line(
-                    f"<Audio {aud_n}>", soundtrack,
-                    kw.get(f"video_{slot}_audio_use", "exact reuse / lip-sync (fully_copy)"),
-                    soundtrack_of=f"<Video {vid_n}>",
-                ))
+                aud_desc.append(self._audio_line(f"<Audio {aud_n}>", soundtrack, soundtrack_of=f"<Video {vid_n}>"))
             samples = media.video_sample(vid, video_fps, limit=used)
             trim = f" (source has {n_src} frames; only the first {used} are used)" if n_src > used else ""
             vid_desc.append(
@@ -227,13 +206,12 @@ class MiniMaxH3R2VPrompter:
             if aud is None:
                 continue
             aud_n += 1
-            aud_desc.append(self._audio_line(
-                f"<Audio {aud_n}>", aud, kw.get(f"audio_{slot}_use", "voice timbre only (reference)")))
+            aud_desc.append(self._audio_line(f"<Audio {aud_n}>", aud))
 
         return parts, pic_desc, vid_desc, aud_desc, first_image
 
     # ------------------------------------------------------------------ main
-    def generate(self, instruction, task, frame_anchor, duration_seconds, thinking, length, music,
+    def generate(self, instruction, task, frame_anchor, duration_seconds, thinking, length,
                  allow_invented_dialogue, max_tokens, seed,
                  model=local_models.SERVER_DEFAULT, mmproj=local_models.MMPROJ_AUTO, **kw):
         print_tokens = kw.get("print_to_console", True)
@@ -283,7 +261,7 @@ class MiniMaxH3R2VPrompter:
         user_text = prompts.build_user_text(
             instruction=instruction, task=task, frame_anchor=frame_anchor, duration_s=eff, frames=frames,
             pictures=pics, videos=vids, audios=auds, length=length,
-            allow_invented_dialogue=allow_invented_dialogue, music=music,
+            allow_invented_dialogue=allow_invented_dialogue,
             asset_notes=kw.get("asset_notes", ""), extra_rules=kw.get("extra_rules", ""),
         )
         if kw.get("_text_only"):
@@ -291,11 +269,11 @@ class MiniMaxH3R2VPrompter:
         user_content = [{"type": "text", "text": user_text}, *parts] if parts else user_text
 
         think_on = thinking != "off"
-        if kw.get("sampling", "qwen recommended") == "custom":
-            samp = dict(temperature=kw.get("temperature", 0.7), top_p=kw.get("top_p", 0.8),
-                        top_k=kw.get("top_k", 20), min_p=0.0, presence_penalty=kw.get("presence_penalty", 1.5))
-        else:
+        # fixed sampling (seed gives variations): Qwen's recommendation for Qwen models, neutral otherwise
+        if "qwen" in model_alias.lower() or not model_path:
             samp = dict(SAMPLING["on" if think_on else "off"])
+        else:
+            samp = dict(temperature=0.8 if think_on else 0.7, top_p=0.95, top_k=40, min_p=0.05, presence_penalty=0.0)
 
         base = {
             "model": model_alias,
