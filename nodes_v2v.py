@@ -159,6 +159,11 @@ class MiniMaxH3V2VEditLLM:
                                          "tooltip": "Max objects SAM3 tracks in total (a pair of shoes = 2)."}),
             "mask": ("MASK", {"tooltip": "Your own mask instead of SAM3 (1 = regenerate). Any length/size, fitted to "
                                          "the H3 timeline and canvas."}),
+            "use_mask": ("BOOLEAN", {
+                "default": True,
+                "tooltip": "Off = ignore every mask source (mask input, SAM3, preset default): the whole frame is "
+                           "regenerated, motion still follows pose/depth/edge. Handy to A/B without rewiring.",
+            }),
         })
         return {"required": required, "optional": optional}
 
@@ -206,7 +211,7 @@ class MiniMaxH3V2VEditLLM:
     def run(self, model, clip, vae, source_video, source_fps, edit_mode, instruction, llm_model, mmproj, thinking,
             length, seed, model_patch=None, control_pose=None, control_depth=None, control_edge=None,
             first_frame=None, sam3_model=None, sam3_clip=None, mask_prompt="", mask_invert=False, mask_grow=12,
-            mask_threshold=0.5, mask_max_objects=8, mask=None, audio_vae=None, source_audio=None, reuse_audio=False, asset_notes="",
+            mask_threshold=0.5, mask_max_objects=8, mask=None, use_mask=True, audio_vae=None, source_audio=None, reuse_audio=False, asset_notes="",
             prompt_override="", motion_lock=1.0, pose_strength=-1.0, depth_strength=-1.0, edge_strength=-1.0,
             structure_end_percent=-1.0, use_source_as_reference=True, start_seconds=0.0, max_seconds=15.0,
             resolution="768p (native)", ref_image_size="max", video_sample_fps=2.0, unload_llm_after_prompt=False,
@@ -228,6 +233,10 @@ class MiniMaxH3V2VEditLLM:
             log.warning("MiniMax H3 V2V: reuse_audio needs audio_vae; the soundtrack only reaches the text encoder.")
 
         # ---- mask (optional): only the masked region is regenerated --------------------------------
+        if not use_mask:
+            if mask is not None or sam3_model is not None:
+                lc.log("V2V: use_mask is off -> no mask, the whole frame is regenerated.")
+            mask, sam3_model, sam3_clip, mask_prompt = None, None, None, ""
         edit_mask, mask_info = self._make_mask(src, tl, width, height, edit_mode, mask, sam3_model, sam3_clip,
                                                mask_prompt, mask_invert, mask_grow, mask_threshold, mask_max_objects)
 

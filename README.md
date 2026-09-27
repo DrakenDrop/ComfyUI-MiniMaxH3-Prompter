@@ -119,6 +119,7 @@ Dengan mask, **hanya area yang di-mask yang dibuat ulang**. Piksel lain, termasu
 | `change_background` | `person` **dibalik** (semua kecuali orang dibuat ulang) |
 | preset lain | tanpa mask, kecuali `mask_prompt` diisi |
 
+- **`use_mask`** (on/off): matikan untuk mengabaikan semua mask (input `mask`, SAM3, dan default preset) tanpa melepas kabel. Seluruh frame dibuat ulang, dan gerakan tetap mengikuti pose/depth/edge.
 - **Beberapa area sekaligus**: pisahkan dengan koma, misalnya `hat, shoes`. Semua area digabung jadi satu mask, dan tiap area diedit sesuai instruction ("topinya jadi merah, sepatunya jadi sneakers putih"). Batas jumlah objek yang dilacak diatur lewat `mask_max_objects` (default 8; sepasang sepatu = 2 objek).
 - `mask_invert`: membuat ulang semua **kecuali** objek yang di-prompt.
 - `mask_grow` (default 12 px): memperbesar mask, supaya ada ruang untuk lengan yang lebih panjang, rambut, atau bayangan. Naikkan kalau baju baru lebih besar dari baju lama.
