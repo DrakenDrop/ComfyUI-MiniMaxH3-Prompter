@@ -36,8 +36,9 @@ FIRST_FIELD = "subject_definitions:"
 class MiniMaxH3R2VPrompter:
     CATEGORY = "MiniMax H3/Prompt"
     FUNCTION = "generate"
-    RETURN_TYPES = ("STRING", "INT", "FLOAT", "IMAGE", "STRING")
-    RETURN_NAMES = ("prompt", "length", "duration_seconds", "first_frame", "reasoning")
+    RETURN_TYPES = ("STRING", "INT", "FLOAT", "IMAGE", "STRING", "IMAGE", "INT")
+    RETURN_NAMES = ("prompt", "length", "duration_seconds", "first_frame", "reasoning", "keyframe_image",
+                    "keyframe_frame_idx")
     OUTPUT_TOOLTIPS = (
         "Prompt H3 Full-Reference -> sambungkan ke 'prompt' di MiniMax H3 Reference to Video.",
         "Jumlah frame (grid 17k+5 @24fps) -> sambungkan ke 'length' di node H3.",
@@ -45,6 +46,8 @@ class MiniMaxH3R2VPrompter:
         "Input first_frame (atau image_1 untuk frame_anchor 'first frame'): sambungkan ke 'Add Guide for MiniMax H3' "
         "dengan frame_idx 0. Tidak perlu kalau memakai MiniMax H3 V2V Edit (node itu sudah melakukannya).",
         "Teks reasoning (kosong kalau thinking = off).",
+        "Gambar keyframe (keyframe_picture) -> 'Add Guide for MiniMax H3'.image.",
+        "Frame index keyframe -> 'Add Guide for MiniMax H3'.frame_idx.",
     )
     DESCRIPTION = (
         "Writes a MiniMax H3 Full-Reference (R2V) prompt with a local Qwen3.8 GGUF served by llama-server. "
@@ -144,6 +147,16 @@ class MiniMaxH3R2VPrompter:
                 "tooltip": "Hanya dipakai kalau model = '(llama-server yang sudah jalan)'.",
             }),
             "print_to_console": ("BOOLEAN", {"default": True}),
+            # --- added later: keep NEW widgets at the END so saved workflows keep their widget values ---
+            "keyframe_picture": ("INT", {
+                "default": 0, "min": 0, "max": 9,
+                "tooltip": "Nomor <Picture N> yang dijadikan keyframe di tengah video (0 = off). Sambungkan output "
+                           "keyframe_image + keyframe_frame_idx ke 'Add Guide for MiniMax H3'.",
+            }),
+            "keyframe_seconds": ("FLOAT", {
+                "default": 2.5, "min": 0.0, "max": 15.1, "step": 0.05,
+                "tooltip": "Detik ke berapa keyframe_picture harus muncul persis (dibulatkan ke frame @24fps).",
+            }),
         })
         return {"required": required, "optional": optional}
 
@@ -176,6 +189,7 @@ class MiniMaxH3R2VPrompter:
                 first_image = img[:1] if hasattr(img, "__getitem__") else img
             pil = batch[0]
             pic_n += 1
+            kw.setdefault("_pic_tensors", {})[pic_n] = img[:1] if hasattr(img, "__getitem__") else img
             w, h = pil.size
             pic_desc.append(f"<Picture {pic_n}>: still image ({w}x{h}) from input image_{slot}, shown below.")
             parts.append({"type": "text", "text": f"<Picture {pic_n}>:"})
@@ -280,8 +294,22 @@ class MiniMaxH3R2VPrompter:
             kw, frames, kw.get("video_sample_fps", 2.0), kw.get("video_max_side", 512),
             kw.get("image_max_side", 768))
 
+        keyframe = None
+        kf_pic = int(kw.get("keyframe_picture", 0) or 0)
+        kf_image, kf_idx = None, 0
+        if kf_pic > 0:
+            tensors = kw.get("_pic_tensors", {})
+            if kf_pic not in tensors:
+                lc.log(f"keyframe_picture = {kf_pic} but only {len(tensors)} image(s) are connected -> keyframe ignored.")
+            elif kf_pic == 1 and frame_anchor.startswith("reference 1 = first frame"):
+                lc.log("keyframe_picture = 1 is already the first frame (frame_anchor) -> keyframe ignored.")
+            else:
+                kf_idx = max(0, min(frames - 1, int(round(float(kw.get("keyframe_seconds", 2.5)) * media.H3_FPS))))
+                kf_image = tensors[kf_pic]
+                keyframe = (f"<Picture {kf_pic}>", kf_idx / media.H3_FPS, kf_idx)
+
         user_text = prompts.build_user_text(
-            instruction=instruction, task=task,
+            instruction=instruction, task=task, keyframe=keyframe,
             frame_anchor=("none" if kw.get("_ff_label") else frame_anchor), first_frame_label=kw.get("_ff_label"),
             duration_s=eff, frames=frames,
             pictures=pics, videos=vids, audios=auds, length=length,
@@ -337,7 +365,9 @@ class MiniMaxH3R2VPrompter:
         )
         if first_image is None:
             first_image = _blank_image()
-        return (prompt, int(frames), float(eff), first_image, reasoning)
+        if kf_image is None:
+            kf_image = _blank_image()
+        return (prompt, int(frames), float(eff), first_image, reasoning, kf_image, int(kf_idx))
 
     @staticmethod
     def _run(server_url, base, system, user, thinking, timeout, print_tokens, on_token):

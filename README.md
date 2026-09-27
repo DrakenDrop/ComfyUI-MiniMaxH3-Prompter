@@ -149,6 +149,20 @@ V2V Edit + LLM.latent ─────> SamplerCustomAdvanced → VAEDecode (H3 v
 
 Kalau kamu tetap memakai node V2V Edit yang lama, sambungkan `prompt` dari prompter ke `prompt_override`. Labelnya sama (`ref_image` → `<Picture 1..n>`, `first_frame` → `<Picture>` terakhir, sumber → `<Video 1>`). Lewatkan videonya dulu ke Conform Video, supaya kedua node menerima frame yang sama.
 
+## Keyframe di tengah video (keyframe_picture + keyframe_seconds)
+
+Selain frame pertama/terakhir (`frame_anchor`), gambar mana pun bisa dikunci di detik tertentu:
+
+- `keyframe_picture` = nomor `<Picture N>` (0 = off), `keyframe_seconds` = detiknya (dibulatkan ke frame @24fps).
+- LLM menulis `<Picture N> is the keyframe of [Shot N] at the S.SS-second mark …` dan "the shot's keyframe corresponds to `<Picture N>`", lalu menambahkan tag `[keyframe completion]`.
+- Output `keyframe_image` dan `keyframe_frame_idx` → **Add Guide for MiniMax H3** (`image` dan `frame_idx`), dirangkai setelah Add Guide untuk first frame kalau ada.
+
+```
+H3 Reference to Video.positive/latent → Add Guide (first_frame, frame_idx 0) → Add Guide (keyframe_image, keyframe_frame_idx) → BasicGuider
+```
+
+Gambar yang sama tetap disambung ke `ref_image_N` di node H3 supaya labelnya ada.
+
 ## Contoh pemakaian
 
 **Edit video:** `task = video editing`, `duration_seconds = 0` (ikut panjang video, dipotong ke 17k+5 seperti node H3), `video_1` = frame video, `video_1_audio` = audionya. Suara asli otomatis dipakai ulang (fully_copy) kecuali instruksi bilang lain.

@@ -117,6 +117,7 @@ def build_user_text(
     frame_anchor: str,
     duration_s: float,
     first_frame_label: str | None = None,
+    keyframe: tuple | None = None,
     frames: int,
     pictures: list[str],
     videos: list[str],
@@ -167,6 +168,18 @@ def build_user_text(
             f"first frame of [Shot 1], showing ...\", add \"{first_frame_label} ([Shot 1] first frame): fully_preserved - ...\" "
             f"to retention_analysis, start [Shot 1] with \"the shot begins from {first_frame_label}\", and describe the new "
             "element exactly as it looks in that frame."
+        )
+    if keyframe:
+        kf_label, kf_t, kf_idx = keyframe
+        if "[keyframe completion]" not in tags:
+            tags.insert(0, "[keyframe completion]")
+        lines.append(
+            f"- KEYFRAME: {kf_label} is the exact frame at the {kf_t:.2f}-second mark (frame {kf_idx}) of the target "
+            f"video. Define it as a standalone \"{kf_label} is the keyframe of [Shot N] at the {kf_t:.2f}-second mark, "
+            f"showing ...\", add \"{kf_label} ([Shot N] keyframe): fully_preserved - ...\" to retention_analysis, and in "
+            f"detailed_description write \"the shot's keyframe corresponds to {kf_label}\" at the moment it is reached: "
+            "the action before leads naturally into that exact pose, framing and layout, the action after continues "
+            "from it. If a cut falls right before it, start that shot with the keyframe."
         )
     if task == "image edit" and n_pics:
         if frame_anchor.startswith("reference 1 = first frame"):
