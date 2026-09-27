@@ -1,0 +1,6 @@
+# All of these are already installed with ComfyUI; listed so ComfyUI-Manager / pip can verify them.
+numpy
+Pillow
+psutil
+# llama.cpp itself is NOT a pip package here: download llama-server from
+# https://github.com/ggml-org/llama.cpp/releases (see README).

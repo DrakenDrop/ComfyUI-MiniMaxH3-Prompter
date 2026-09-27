@@ -46,7 +46,15 @@ Pilih model `(llama-server yang sudah jalan)` dan jalankan `start_llama_server.b
 
 ## 3. Instal node
 
-Salin folder `ComfyUI-MiniMaxH3-Prompter` ke `ComfyUI/custom_nodes/`, lalu restart ComfyUI.
+Salin folder `ComfyUI-MiniMaxH3-Prompter` ke `ComfyUI/custom_nodes/`, lalu restart ComfyUI. Atau:
+
+```bash
+cd ComfyUI/custom_nodes
+git clone https://github.com/DrakenDrop/ComfyUI-MiniMaxH3-Prompter.git
+pip install -r ComfyUI-MiniMaxH3-Prompter/requirements.txt
+```
+
+Dependency-nya hanya `numpy`, `Pillow` dan `psutil`, yang semuanya sudah terpasang bersama ComfyUI. llama-server tidak diinstal lewat pip (lihat langkah 1).
 Node ada di **MiniMax H3/Prompt → MiniMax H3 R2V Prompter (llama.cpp)**.
 
 ## 4. Menyambung ke node H3 (penting: urutannya harus sama)
