@@ -86,6 +86,7 @@ Node **MiniMax H3 V2V Edit + LLM (Fun ControlNet)** menggabungkan V2V Edit ([Min
 
 | preset | untuk | pose / depth / edge (release) |
 |---|---|---|
+| `video_edit` (default) | prompt sama persis dengan prompter biasa (`task = video editing`), tanpa aturan preset tambahan | 0.90 / 0.30 / 0 (0.50) |
 | `change_outfit` | ganti baju (outfit swap) | 0.85 / 0.30 / 0 (0.40) |
 | `replace_person` | ganti orang | 1.00 / 0 / 0 (0.40) |
 | `add_object` | tambah objek | 0.80 / 0.20 / 0 (0.30) |
@@ -102,6 +103,29 @@ Node **MiniMax H3 V2V Edit + LLM (Fun ControlNet)** menggabungkan V2V Edit ([Min
 - `unload_llm_after_prompt` → llama-server dimatikan setelah prompt jadi, supaya VRAM-nya bebas untuk sampling.
 - Resolusi: aspect ratio mengikuti video sumber (sisi pendek 768, maks 768×1344, kelipatan 32).
 - Preset `remove_object` dan `change_background` masih baru: kekuatan ControlNet-nya belum teruji, jadi atur `motion_lock` / strength manual kalau hasilnya kurang pas.
+
+### Mask dengan prompt teks (SAM 3.1)
+
+Dengan mask, **hanya area yang di-mask yang dibuat ulang**. Piksel lain, termasuk wajah kalau tidak ikut di-mask, disalin langsung dari video asli lewat inpainting Fun ControlNet-Union.
+
+1. Download `sam3.1_multiplex_fp16.safetensors` dari [Comfy-Org/sam3.1](https://huggingface.co/Comfy-Org/sam3.1) ke `models/checkpoints/`.
+2. `CheckpointLoaderSimple` (sam3.1) → `MODEL` ke **sam3_model**, `CLIP` ke **sam3_clip**.
+3. Isi **mask_prompt** dalam bahasa Inggris, boleh beberapa dipisah koma, misalnya `shirt, pants`, `person`, `red car`, `dog`.
+
+| preset | mask default kalau `mask_prompt` kosong |
+|---|---|
+| `change_outfit` | `clothes` (baju saja; wajah & rambut tetap asli) |
+| `replace_person` | `person` |
+| `change_background` | `person` **dibalik** (semua kecuali orang dibuat ulang) |
+| preset lain | tanpa mask, kecuali `mask_prompt` diisi |
+
+- `mask_invert`: membuat ulang semua **kecuali** objek yang di-prompt.
+- `mask_grow` (default 12 px): memperbesar mask, supaya ada ruang untuk lengan yang lebih panjang, rambut, atau bayangan. Naikkan kalau baju baru lebih besar dari baju lama.
+- `mask_threshold`: turunkan kalau SAM3 tidak menemukan objeknya.
+- `mask`: bisa juga memakai mask sendiri (MASK) sebagai pengganti SAM3.
+- Output **mask** bisa di-preview (Convert Mask to Image → Preview) untuk mengecek area yang akan diedit.
+- Mask di-cache: mengubah `motion_lock` atau setting sampler tidak menjalankan SAM3 lagi.
+- Butuh `model_patch` (Fun ControlNet-Union), karena inpainting-nya berjalan lewat model itu.
 
 **Sambungan:**
 

@@ -136,6 +136,7 @@ class Timeline:
 # silhouettes and background, so they are weaker and released earlier where the edit changes shapes.
 # The Fun ControlNet skips of chained controls add up: keep the sum around 1.
 AUTO_STRENGTH = {
+    "video_edit":        (0.90, 0.30, 0.00, 0.50),  # plain prompter [video editing] prompt, no preset rules
     "custom":            (0.90, 0.30, 0.00, 0.50),
     "change_outfit":     (0.85, 0.30, 0.00, 0.40),
     "replace_person":    (1.00, 0.00, 0.00, 0.40),
@@ -177,6 +178,7 @@ def resolve_strengths(edit_mode, motion_lock, connected, pose_strength, depth_st
 # ----------------------------------------------------------------------------- LLM edit presets
 # Sent in the (per-run) user message, so the static system prompt stays cached.
 PRESET_RULES = {
+    "video_edit": "",
     "custom": "",
     "change_outfit": (
         "EDIT TYPE - OUTFIT SWAP: keep the person's identity, face, hair, body, pose, motion and position; only the "
@@ -241,3 +243,84 @@ def tensor_sig(t) -> tuple:
         return (tuple(t.shape), round(float(flat[::step].float().sum()), 4))
     except Exception:  # noqa: BLE001
         return (id(t),)
+
+
+# ----------------------------------------------------------------------------- text-prompted masks (SAM 3.1)
+# preset -> (default SAM3 prompt, invert). Empty prompt = no mask unless the user writes one.
+MASK_DEFAULTS = {
+    "change_outfit": ("clothes", False),
+    "replace_person": ("person", False),
+    "change_background": ("person", True),
+}
+
+
+def sam3_video_mask(frames, sam3_model, sam3_clip, prompt: str, threshold: float = 0.5, max_objects: int = 4):
+    """Text-prompted mask for every frame with ComfyUI core SAM 3 video tracking. Returns [N,H,W] float 0/1."""
+    from comfy_extras import nodes_sam3  # type: ignore
+
+    def _a(o):
+        return o.args if hasattr(o, "args") else o
+
+    tokens = sam3_clip.tokenize(prompt)
+    cond = sam3_clip.encode_from_tokens_scheduled(tokens)
+    track = _a(nodes_sam3.SAM3_VideoTrack.execute(
+        images=frames, model=sam3_model, conditioning=cond, detection_threshold=threshold,
+        max_objects=max_objects, detect_interval=1))[0]
+    masks = _a(nodes_sam3.SAM3_TrackToMask.execute(track_data=track, object_indices=""))[0]
+    return (masks > 0.5).float()
+
+
+def refine_mask(mask, grow_px: int = 12, temporal: int = 1, invert: bool = False):
+    """Binary [N,H,W] mask: optional invert, spatial dilation by grow_px, temporal max over +-temporal frames
+    (hides single-frame dropouts of the tracker)."""
+    import torch
+    import torch.nn.functional as F
+
+    m = (mask > 0.5).float()
+    if invert:
+        m = 1.0 - m
+    if grow_px > 0:
+        k = 2 * int(grow_px) + 1
+        m = F.max_pool2d(m.unsqueeze(1), kernel_size=k, stride=1, padding=int(grow_px))[:, 0]
+    if temporal > 0 and m.shape[0] > 1:
+        out = m.clone()
+        for d in range(1, int(temporal) + 1):
+            out[d:] = torch.maximum(out[d:], m[:-d])
+            out[:-d] = torch.maximum(out[:-d], m[d:])
+        m = out
+    return m.clamp(0, 1)
+
+
+def fit_mask(mask, frame_count: int, width: int, height: int):
+    """Any [N,H,W] mask -> [frame_count,height,width] (nearest in time, center-crop resize)."""
+    import torch
+    import torch.nn.functional as F
+
+    if mask.dim() == 2:
+        mask = mask.unsqueeze(0)
+    n = mask.shape[0]
+    if n != frame_count:
+        idx = torch.linspace(0, n - 1, frame_count).round().long() if n > 1 else torch.zeros(frame_count).long()
+        mask = mask[idx]
+    if mask.shape[1] != height or mask.shape[2] != width:
+        src_ratio, dst_ratio = mask.shape[2] / mask.shape[1], width / height
+        if abs(src_ratio - dst_ratio) > 1e-3:  # center crop like resize_frames
+            if src_ratio > dst_ratio:
+                new_w = int(round(mask.shape[1] * dst_ratio))
+                x0 = (mask.shape[2] - new_w) // 2
+                mask = mask[:, :, x0:x0 + new_w]
+            else:
+                new_h = int(round(mask.shape[2] / dst_ratio))
+                y0 = (mask.shape[1] - new_h) // 2
+                mask = mask[:, y0:y0 + new_h, :]
+        mask = F.interpolate(mask.unsqueeze(1).float(), size=(height, width), mode="nearest")[:, 0]
+    return (mask > 0.5).float()
+
+
+def mask_rule(prompt: str, invert: bool) -> str:
+    region = f"everything except the region showing '{prompt}'" if invert else f"the region showing '{prompt}'"
+    return (
+        f"MASKED EDIT: only {region} is regenerated; every other pixel is copied from <Video 1> unchanged. Put the "
+        "detail into the new content of that region (look, material, how it moves with the subject, contact shadows "
+        "and edges where it meets the kept area); describe the kept area only briefly for context."
+    )

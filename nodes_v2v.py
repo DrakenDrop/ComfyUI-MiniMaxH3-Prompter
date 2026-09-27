@@ -48,8 +48,8 @@ def _args(node_output):
 class MiniMaxH3V2VEditLLM:
     CATEGORY = CATEGORY
     FUNCTION = "run"
-    RETURN_TYPES = ("MODEL", "CONDITIONING", "LATENT", "STRING", "IMAGE", "INT", "FLOAT")
-    RETURN_NAMES = ("model", "positive", "latent", "prompt", "source_frames", "frame_count", "fps")
+    RETURN_TYPES = ("MODEL", "CONDITIONING", "LATENT", "STRING", "IMAGE", "INT", "FLOAT", "MASK")
+    RETURN_NAMES = ("model", "positive", "latent", "prompt", "source_frames", "frame_count", "fps", "mask")
     DESCRIPTION = (
         "Video-to-video edit for MiniMax H3 (ref2va model) with the prompt written by a local LLM (llama.cpp) that "
         "sees the actual frames. Presets: outfit swap, replace person, add object/subject, remove object, change "
@@ -69,9 +69,10 @@ class MiniMaxH3V2VEditLLM:
             "source_fps": ("FLOAT", {"default": 24.0, "min": 1.0, "max": 240.0, "step": 0.001,
                                      "tooltip": "FPS of source_video (e.g. from Get Video Components)."}),
             "edit_mode": (v2v.EDIT_MODES, {
-                "default": "change_outfit",
+                "default": "video_edit",
                 "tooltip": "Preset: what the LLM writes and how strong pose/depth/edge lock the motion. "
-                           "custom = only your instruction.",
+                           "video_edit = the same prompt as the standalone prompter (task video editing), no extra "
+                           "preset rules; custom = same, but the preset name documents a free edit.",
             }),
             "instruction": ("STRING", {
                 "multiline": True, "default": "",
@@ -106,6 +107,22 @@ class MiniMaxH3V2VEditLLM:
                 "tooltip": "Optional EDITED frame 0: pinned at frame 0 and given as the last <Picture>. "
                            "Biggest consistency boost.",
             }),
+            "sam3_model": ("MODEL", {"tooltip": "SAM 3.1 from CheckpointLoaderSimple (sam3.1_multiplex_fp16.safetensors) "
+                                                 "-> text-prompted mask. Only the masked area is regenerated."}),
+            "sam3_clip": ("CLIP", {"tooltip": "CLIP output of the same SAM 3.1 CheckpointLoaderSimple."}),
+            "mask_prompt": ("STRING", {
+                "default": "",
+                "tooltip": "What to mask, in English, comma-separated (e.g. 'shirt, pants', 'person', 'red car'). "
+                           "Empty = preset default (outfit: clothes, replace person: person, background: person "
+                           "inverted), other presets: no mask.",
+            }),
+            "mask_invert": ("BOOLEAN", {"default": False,
+                                        "tooltip": "Regenerate everything EXCEPT the prompted object."}),
+            "mask_grow": ("INT", {"default": 12, "min": 0, "max": 128,
+                                  "tooltip": "Grow the mask by N pixels (room for longer sleeves, hair, shadows)."}),
+            "mask_threshold": ("FLOAT", {"default": 0.5, "min": 0.05, "max": 0.95, "step": 0.01}),
+            "mask": ("MASK", {"tooltip": "Your own mask instead of SAM3 (1 = regenerate). Any length/size, fitted to "
+                                         "the H3 timeline and canvas."}),
             "audio_vae": ("VAE", {"tooltip": "MiniMax H3 audio VAE (only for reuse_audio)."}),
             "source_audio": ("AUDIO", {"tooltip": "Soundtrack of the source (for reuse_audio)."}),
             "reuse_audio": ("BOOLEAN", {
@@ -144,8 +161,8 @@ class MiniMaxH3V2VEditLLM:
 
     # ------------------------------------------------------------------ prompt
     def _write_prompt(self, *, edit_mode, instruction, llm_model, mmproj, thinking, length, seed, src, refs, first,
-                      audio, asset_notes, video_sample_fps, context_size, max_tokens, duration, use_src):
-        key = (edit_mode, instruction, llm_model, mmproj, thinking, length, seed, asset_notes, video_sample_fps,
+                      audio, asset_notes, video_sample_fps, context_size, max_tokens, duration, use_src, mask_info):
+        key = (edit_mode, instruction, llm_model, mmproj, thinking, length, seed, asset_notes, video_sample_fps, mask_info,
                bool(audio), use_src, v2v.tensor_sig(src), tuple(v2v.tensor_sig(r) for r in refs),
                v2v.tensor_sig(first))
         if key in self._cache:
@@ -163,6 +180,10 @@ class MiniMaxH3V2VEditLLM:
             if audio is not None:
                 kw["video_1_audio"] = audio
         rules = v2v.PRESET_RULES.get(edit_mode, "")
+        if mask_info:
+            rules += "\n" + (v2v.mask_rule(*mask_info) if mask_info[0] else
+                             "MASKED EDIT: only the masked region is regenerated; everything else is copied from "
+                             "<Video 1>. Put the detail into the new content; describe the kept area briefly.")
         if not use_src:
             rules += ("\nThe source clip is NOT supplied as <Video 1>: never mention <Video 1>; describe the whole "
                       "resulting scene explicitly (the motion comes from control videos).")
@@ -181,7 +202,8 @@ class MiniMaxH3V2VEditLLM:
     # ------------------------------------------------------------------ main
     def run(self, model, clip, vae, source_video, source_fps, edit_mode, instruction, llm_model, mmproj, thinking,
             length, seed, model_patch=None, control_pose=None, control_depth=None, control_edge=None,
-            first_frame=None, audio_vae=None, source_audio=None, reuse_audio=False, asset_notes="",
+            first_frame=None, sam3_model=None, sam3_clip=None, mask_prompt="", mask_invert=False, mask_grow=12,
+            mask_threshold=0.5, mask=None, audio_vae=None, source_audio=None, reuse_audio=False, asset_notes="",
             prompt_override="", motion_lock=1.0, pose_strength=-1.0, depth_strength=-1.0, edge_strength=-1.0,
             structure_end_percent=-1.0, use_source_as_reference=True, start_seconds=0.0, max_seconds=15.0,
             resolution="768p (native)", ref_image_size="max", video_sample_fps=2.0, unload_llm_after_prompt=False,
@@ -202,6 +224,10 @@ class MiniMaxH3V2VEditLLM:
         if reuse_audio and audio is not None and audio_vae is None:
             log.warning("MiniMax H3 V2V: reuse_audio needs audio_vae; the soundtrack only reaches the text encoder.")
 
+        # ---- mask (optional): only the masked region is regenerated --------------------------------
+        edit_mask, mask_info = self._make_mask(src, tl, width, height, edit_mode, mask, sam3_model, sam3_clip,
+                                               mask_prompt, mask_invert, mask_grow, mask_threshold)
+
         # ---- prompt -------------------------------------------------------------------------------
         prompt = (prompt_override or "").strip()
         if not prompt:
@@ -209,7 +235,7 @@ class MiniMaxH3V2VEditLLM:
                 edit_mode=edit_mode, instruction=instruction, llm_model=llm_model, mmproj=mmproj,
                 thinking=thinking, length=length, seed=seed, src=src, refs=refs, first=first, audio=audio,
                 asset_notes=asset_notes, video_sample_fps=video_sample_fps, context_size=context_size,
-                max_tokens=max_tokens, duration=tl.duration, use_src=use_source_as_reference)
+                max_tokens=max_tokens, duration=tl.duration, use_src=use_source_as_reference, mask_info=mask_info)
             if unload_llm_after_prompt:
                 managed_server.stop(_CFG)
 
@@ -238,22 +264,79 @@ class MiniMaxH3V2VEditLLM:
         if any(connected.values()) and model_patch is None:
             raise ValueError("control videos are connected but model_patch (MiniMax H3 Fun ControlNet-Union, "
                              "loaded with ModelPatchLoader) is missing")
+        if edit_mask is not None and model_patch is None:
+            raise ValueError("a mask needs model_patch (MiniMax H3 Fun ControlNet-Union): the masked video "
+                             "inpainting runs through it")
         out_model = model
         plan = v2v.resolve_strengths(edit_mode, motion_lock, connected, pose_strength, depth_strength,
                                      edge_strength, structure_end_percent)
+        mask_pending = edit_mask
         for name, (strength, end) in plan.items():
             if strength <= 0:
                 continue
             cv = v2v.resize_frames(tl.take(controls[name], "control_" + name), width, height)
-            lc.log(f"V2V: control {name} strength={strength:.2f} end={end:.2f}")
+            extra = {}
+            if mask_pending is not None:  # the union model takes control + mask + source in ONE patch
+                extra = {"mask": mask_pending, "source_video": src}
+                mask_pending = None
+            lc.log(f"V2V: control {name} strength={strength:.2f} end={end:.2f}" + (" + mask" if extra else ""))
             out_model = _args(h3.MiniMaxH3FunControlNetApply.execute(
                 model=out_model, model_patch=model_patch, vae=vae, strength=strength,
-                start_percent=0.0, end_percent=end, control_video=cv))[0]
+                start_percent=0.0, end_percent=end, control_video=cv, **extra))[0]
+        if mask_pending is not None:  # mask without any control video
+            lc.log("V2V: mask-only inpainting (no control video) strength=1.00")
+            out_model = _args(h3.MiniMaxH3FunControlNetApply.execute(
+                model=out_model, model_patch=model_patch, vae=vae, strength=1.0, start_percent=0.0,
+                end_percent=1.0, control_video=None, mask=mask_pending, source_video=src))[0]
         if not any(connected.values()):
             log.warning("MiniMax H3 V2V: no control video connected - motion only follows <Video 1> loosely. "
                         "Connect at least control_pose for motion that matches the input.")
 
-        return (out_model, positive, latent, prompt, src, int(tl.frame_count), float(v2v.H3_FPS))
+        if edit_mask is None:
+            import torch
+            out_mask = torch.zeros((tl.frame_count, height, width))
+        else:
+            out_mask = edit_mask
+        return (out_model, positive, latent, prompt, src, int(tl.frame_count), float(v2v.H3_FPS), out_mask)
+
+    # ------------------------------------------------------------------ mask
+    _mask_cache: dict = {}
+
+    def _make_mask(self, src, tl, width, height, edit_mode, mask, sam3_model, sam3_clip, mask_prompt, mask_invert,
+                   mask_grow, mask_threshold):
+        """Returns (mask [N,H,W] or None, mask_info for the LLM: (prompt, invert) / ("", False) / None)."""
+        if mask is not None:
+            m = v2v.fit_mask(mask.float(), tl.frame_count, width, height)
+            m = v2v.refine_mask(m, grow_px=mask_grow, temporal=0, invert=mask_invert)
+            lc.log(f"V2V: external mask, {float(m.mean()) * 100:.1f}% of the frame regenerated")
+            return m, ("", False)
+        prompt = (mask_prompt or "").strip()
+        invert = bool(mask_invert)
+        if not prompt and edit_mode in v2v.MASK_DEFAULTS and sam3_model is not None:
+            prompt, invert = v2v.MASK_DEFAULTS[edit_mode]
+        if not prompt:
+            if sam3_model is not None:
+                lc.log(f"V2V: SAM3 connected but no mask_prompt for preset '{edit_mode}' -> no mask (whole frame).")
+            return None, None
+        if sam3_model is None or sam3_clip is None:
+            raise ValueError("mask_prompt needs sam3_model + sam3_clip (CheckpointLoaderSimple with "
+                             "sam3.1_multiplex_fp16.safetensors).")
+        key = (v2v.tensor_sig(src), prompt, round(float(mask_threshold), 3), invert, int(mask_grow))
+        if key in self._mask_cache:
+            m = self._mask_cache[key]
+        else:
+            raw = v2v.sam3_video_mask(src, sam3_model, sam3_clip, prompt, threshold=mask_threshold)
+            raw = v2v.fit_mask(raw, tl.frame_count, width, height)
+            if float(raw.sum()) == 0:
+                raise ValueError(f"SAM3 found no '{prompt}' in the video. Try another mask_prompt (English, e.g. "
+                                 "'shirt' instead of 'clothes') or lower mask_threshold.")
+            m = v2v.refine_mask(raw, grow_px=mask_grow, temporal=1, invert=invert).cpu()
+            if len(self._mask_cache) > 8:
+                self._mask_cache.clear()
+            self._mask_cache[key] = m
+        lc.log(f"V2V: SAM3 mask '{prompt}'{' (inverted)' if invert else ''}: "
+               f"{float(m.mean()) * 100:.1f}% of the frame regenerated")
+        return m, (prompt, invert)
 
 
 class MiniMaxH3ConformVideo:
