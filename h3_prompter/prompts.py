@@ -183,6 +183,16 @@ def build_user_text(
                 "framing, layout, lighting), mark it partially_preserved in retention_analysis naming exactly what changes, "
                 "then animate the edited scene naturally."
             )
+        if n_pics > 1:
+            lines.append(
+                "- IMAGE EDIT REFERENCES: <Picture 1> is the image being edited; <Picture 2> and later are references for "
+                "the edit (e.g. the new outfit, object, person or style). Define them as subjects, and in "
+                "retention_analysis mark what they give: attribute_transfer (e.g. the garment put on the person in "
+                "<Picture 1>), fully_preserved (an object/person inserted as is) or weak_reference (style only). Add "
+                "[reference generation] to the task prefix."
+            )
+            if "[reference generation]" not in tags:
+                tags.append("[reference generation]")
         if "[keyframe completion]" not in tags:
             tags.insert(0, "[keyframe completion]")
     if task == "video editing":
