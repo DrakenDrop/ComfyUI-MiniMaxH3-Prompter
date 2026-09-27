@@ -336,6 +336,7 @@ class MiniMaxH3R2VPrompter:
                 payload = dict(base, messages=msgs)
                 if kwargs:
                     payload["chat_template_kwargs"] = kwargs
+                    payload["reasoning_effort"] = "none"  # newer llama-server: OpenAI-style switch, also disables thinking
                 try:
                     content, _, timings = lc.stream_chat(
                         server_url, payload, timeout=timeout, abort_on_reasoning=kwargs is not None,

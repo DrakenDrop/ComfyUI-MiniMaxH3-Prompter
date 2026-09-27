@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -21,7 +22,8 @@ _LOG_PATH = os.path.join(_PACK_DIR, "llama-server.log")
 
 _proc: subprocess.Popen | None = None
 
-DEFAULT_MANAGED_ARGS = ["--jinja", "-ngl", "999", "-np", "1", "--no-mmap"]
+DEFAULT_MANAGED_ARGS = ["--jinja", "-ngl", "999", "-np", "1"]
+_help_cache: dict[str, str] = {}
 
 
 def _exe_name() -> str:
@@ -55,6 +57,38 @@ def find_llama_server(cfg: dict) -> str:
         "llama-server tidak ditemukan. Isi 'llama_server_path' di config.json (mis. C:\\llama.cpp\\llama-server.exe), "
         "atau taruh folder llama.cpp di C:\\llama.cpp."
     )
+
+
+def _help_text(exe: str) -> str:
+    if exe not in _help_cache:
+        try:
+            out = subprocess.run([exe, "--help"], capture_output=True, timeout=30, stdin=subprocess.DEVNULL)
+            _help_cache[exe] = (out.stdout + out.stderr).decode("utf-8", "replace")
+        except Exception:  # noqa: BLE001
+            _help_cache[exe] = ""
+    return _help_cache[exe]
+
+
+def _drop_unsupported(exe: str, args: list[str]) -> list[str]:
+    """Remove options this llama-server build does not know (flags get renamed/removed between releases,
+    e.g. --no-mmap was replaced by --load-mode). Keeps everything when --help can't be read."""
+    help_text = _help_text(exe)
+    if "--port" not in help_text or "--ctx-size" not in help_text:
+        return args  # not a recognizable llama-server help page -> don't touch the args
+    known = set(re.findall(r"(?<![\w-])(-{1,2}[a-zA-Z][\w-]*)", help_text))
+    out: list[str] = []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a.startswith("-") and not re.match(r"^-\d", a) and a.split("=")[0] not in known:
+            lc.log(f"llama-server build does not support '{a}', skipping it.")
+            if "=" not in a and i + 1 < len(args) and not args[i + 1].startswith("-"):
+                i += 1  # skip its value too
+            i += 1
+            continue
+        out.append(a)
+        i += 1
+    return out
 
 
 # ------------------------------------------------------------------ state
@@ -178,7 +212,7 @@ def ensure(model_path: str, mmproj_path: str | None, ctx: int, cfg: dict) -> str
 
     exe = find_llama_server(cfg)
     port = str(int(cfg.get("managed_port", 8090)))
-    args = cfg.get("managed_server_args") or DEFAULT_MANAGED_ARGS
+    args = _drop_unsupported(exe, [str(a) for a in (cfg.get("managed_server_args") or DEFAULT_MANAGED_ARGS)])
     cmd = [exe, "-m", model_path]
     if mmproj_path:
         cmd += ["--mmproj", mmproj_path]

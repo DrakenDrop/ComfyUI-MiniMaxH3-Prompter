@@ -35,7 +35,7 @@ DEFAULT_CONFIG = {
         "-hf", "unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL",
         "--jinja", "-ngl", "999", "-c", "32768", "-np", "1",
         "--host", "127.0.0.1", "--port", "8080",
-        "--alias", "qwen3.8-27b", "--no-mmap",
+        "--alias", "qwen3.8-27b",
     ],
     "startup_wait_seconds": 900,
 }

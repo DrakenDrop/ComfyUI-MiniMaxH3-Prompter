@@ -32,7 +32,7 @@ Format output mengikuti [official Full-Reference prompt guide MiniMax H3](https:
 
 Node memindai **`ComfyUI/models/LLM`** (termasuk subfolder, misalnya `LLM/GGUF/...` dari ThinkingLLM) dan menampilkan semua file `.gguf` di dropdown **model**. Tidak perlu download ulang.
 
-- **model**: pilih GGUF-nya. Node menjalankan `llama-server` sendiri di port 8090 (`-ngl 999`, `--no-mmap`), dan model **tetap di VRAM** antar-run maupun saat ComfyUI di-restart. Server baru di-restart kalau kamu memilih model, mmproj, atau `context_size` yang lain.
+- **model**: pilih GGUF-nya. Node menjalankan `llama-server` sendiri di port 8090 (`-ngl 999`, semua layer di GPU), dan model **tetap di VRAM** antar-run maupun saat ComfyUI di-restart. Server baru di-restart kalau kamu memilih model, mmproj, atau `context_size` yang lain.
 - **mmproj** (vision): `auto` memilih mmproj di folder yang sama. Yang diutamakan adalah nama yang cocok dengan model (mis. `mmproj-Qwen3.8-27B-ABLITERATED-F16`), atau nama generik seperti `mmproj-F16.gguf` kalau foldernya hanya berisi satu model. Kalau ada keraguan, node memakai mode text-only dan menulis peringatan di console. Pilih mmproj secara manual dari dropdown dalam kasus itu. mmproj yang salah pasangan membuat llama-server crash.
 - Syarat satu-satunya: node harus tahu lokasi `llama-server.exe`. Taruh llama.cpp di `C:\llama.cpp`, atau salin `config.example.json` menjadi `config.json` lalu isi `llama_server_path`. Model tambahan di luar `models/LLM` bisa ditambahkan lewat `extra_model_dirs`.
 - File model yang baru ditambahkan akan muncul setelah browser di-refresh.

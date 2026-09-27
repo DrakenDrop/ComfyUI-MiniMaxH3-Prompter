@@ -14,7 +14,6 @@ REM set MODEL_ARGS=-m D:\models\Qwen3.8-27B-UD-Q4_K_XL.gguf --mmproj D:\models\m
   -ngl 999 ^
   -c 32768 ^
   -np 1 ^
-  --no-mmap ^
   --host 127.0.0.1 --port 8080 ^
   --alias qwen3.8-27b
 pause
