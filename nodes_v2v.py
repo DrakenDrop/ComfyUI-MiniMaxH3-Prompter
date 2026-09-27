@@ -121,6 +121,8 @@ class MiniMaxH3V2VEditLLM:
             "mask_grow": ("INT", {"default": 12, "min": 0, "max": 128,
                                   "tooltip": "Grow the mask by N pixels (room for longer sleeves, hair, shadows)."}),
             "mask_threshold": ("FLOAT", {"default": 0.5, "min": 0.05, "max": 0.95, "step": 0.01}),
+            "mask_max_objects": ("INT", {"default": 8, "min": 1, "max": 64,
+                                         "tooltip": "Max objects SAM3 tracks in total (a pair of shoes = 2)."}),
             "mask": ("MASK", {"tooltip": "Your own mask instead of SAM3 (1 = regenerate). Any length/size, fitted to "
                                          "the H3 timeline and canvas."}),
             "audio_vae": ("VAE", {"tooltip": "MiniMax H3 audio VAE (only for reuse_audio)."}),
@@ -203,7 +205,7 @@ class MiniMaxH3V2VEditLLM:
     def run(self, model, clip, vae, source_video, source_fps, edit_mode, instruction, llm_model, mmproj, thinking,
             length, seed, model_patch=None, control_pose=None, control_depth=None, control_edge=None,
             first_frame=None, sam3_model=None, sam3_clip=None, mask_prompt="", mask_invert=False, mask_grow=12,
-            mask_threshold=0.5, mask=None, audio_vae=None, source_audio=None, reuse_audio=False, asset_notes="",
+            mask_threshold=0.5, mask_max_objects=8, mask=None, audio_vae=None, source_audio=None, reuse_audio=False, asset_notes="",
             prompt_override="", motion_lock=1.0, pose_strength=-1.0, depth_strength=-1.0, edge_strength=-1.0,
             structure_end_percent=-1.0, use_source_as_reference=True, start_seconds=0.0, max_seconds=15.0,
             resolution="768p (native)", ref_image_size="max", video_sample_fps=2.0, unload_llm_after_prompt=False,
@@ -226,7 +228,7 @@ class MiniMaxH3V2VEditLLM:
 
         # ---- mask (optional): only the masked region is regenerated --------------------------------
         edit_mask, mask_info = self._make_mask(src, tl, width, height, edit_mode, mask, sam3_model, sam3_clip,
-                                               mask_prompt, mask_invert, mask_grow, mask_threshold)
+                                               mask_prompt, mask_invert, mask_grow, mask_threshold, mask_max_objects)
 
         # ---- prompt -------------------------------------------------------------------------------
         prompt = (prompt_override or "").strip()
@@ -303,7 +305,7 @@ class MiniMaxH3V2VEditLLM:
     _mask_cache: dict = {}
 
     def _make_mask(self, src, tl, width, height, edit_mode, mask, sam3_model, sam3_clip, mask_prompt, mask_invert,
-                   mask_grow, mask_threshold):
+                   mask_grow, mask_threshold, mask_max_objects=8):
         """Returns (mask [N,H,W] or None, mask_info for the LLM: (prompt, invert) / ("", False) / None)."""
         if mask is not None:
             m = v2v.fit_mask(mask.float(), tl.frame_count, width, height)
@@ -321,11 +323,13 @@ class MiniMaxH3V2VEditLLM:
         if sam3_model is None or sam3_clip is None:
             raise ValueError("mask_prompt needs sam3_model + sam3_clip (CheckpointLoaderSimple with "
                              "sam3.1_multiplex_fp16.safetensors).")
-        key = (v2v.tensor_sig(src), prompt, round(float(mask_threshold), 3), invert, int(mask_grow))
+        key = (v2v.tensor_sig(src), prompt, round(float(mask_threshold), 3), invert, int(mask_grow),
+               int(mask_max_objects))
         if key in self._mask_cache:
             m = self._mask_cache[key]
         else:
-            raw = v2v.sam3_video_mask(src, sam3_model, sam3_clip, prompt, threshold=mask_threshold)
+            raw = v2v.sam3_video_mask(src, sam3_model, sam3_clip, prompt, threshold=mask_threshold,
+                                      max_objects=int(mask_max_objects))
             raw = v2v.fit_mask(raw, tl.frame_count, width, height)
             if float(raw.sum()) == 0:
                 raise ValueError(f"SAM3 found no '{prompt}' in the video. Try another mask_prompt (English, e.g. "

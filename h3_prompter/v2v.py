@@ -318,9 +318,16 @@ def fit_mask(mask, frame_count: int, width: int, height: int):
 
 
 def mask_rule(prompt: str, invert: bool) -> str:
-    region = f"everything except the region showing '{prompt}'" if invert else f"the region showing '{prompt}'"
+    items = [p.split(":")[0].strip() for p in prompt.split(",") if p.strip()]
+    names = " and ".join(f"'{i}'" for i in items) if items else f"'{prompt}'"
+    if invert:
+        what = f"everything except the {'regions' if len(items) > 1 else 'region'} showing {names} is regenerated"
+    elif len(items) > 1:
+        what = f"only the regions showing {names} are regenerated (each one edited as the request says)"
+    else:
+        what = f"only the region showing {names} is regenerated"
     return (
-        f"MASKED EDIT: only {region} is regenerated; every other pixel is copied from <Video 1> unchanged. Put the "
-        "detail into the new content of that region (look, material, how it moves with the subject, contact shadows "
-        "and edges where it meets the kept area); describe the kept area only briefly for context."
+        f"MASKED EDIT: {what}; every other pixel is copied from <Video 1> unchanged. Put the detail into the new "
+        "content of the masked area (look, material, how it follows the body, contact shadows and edges where it "
+        "meets the kept area); describe the kept area only briefly for context."
     )
