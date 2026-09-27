@@ -42,7 +42,8 @@ class MiniMaxH3R2VPrompter:
         "Prompt H3 Full-Reference -> sambungkan ke 'prompt' di MiniMax H3 Reference to Video.",
         "Jumlah frame (grid 17k+5 @24fps) -> sambungkan ke 'length' di node H3.",
         "Durasi efektif dalam detik.",
-        "image_1 (untuk frame_anchor 'first frame'): sambungkan ke 'Add Guide for MiniMax H3' dengan frame_idx 0.",
+        "Input first_frame (atau image_1 untuk frame_anchor 'first frame'): sambungkan ke 'Add Guide for MiniMax H3' "
+        "dengan frame_idx 0. Tidak perlu kalau memakai MiniMax H3 V2V Edit (node itu sudah melakukannya).",
         "Teks reasoning (kosong kalau thinking = off).",
     )
     DESCRIPTION = (
@@ -102,6 +103,10 @@ class MiniMaxH3R2VPrompter:
                 "tooltip": "Satu gambar per input (tanpa batch). Gambar yang tersambung dinomori berurutan <Picture 1>, "
                            "<Picture 2>, ... Sambungkan ke ref_image_N di node H3 dengan urutan yang sama.",
             })
+        optional["first_frame"] = ("IMAGE", {
+            "tooltip": "Frame 0 yang sudah diedit (sama dengan input first_frame di MiniMax H3 V2V Edit). "
+                       "Diberi label <Picture> TERAKHIR (setelah image_1..n), persis seperti node V2V.",
+        })
         for i in range(1, MAX_VIDEOS + 1):
             optional[f"video_{i}"] = ("IMAGE", {
                 "tooltip": "Frame video @24fps (sama dengan ref_video_N di node H3).",
@@ -175,6 +180,22 @@ class MiniMaxH3R2VPrompter:
             pic_desc.append(f"<Picture {pic_n}>: still image ({w}x{h}) from input image_{slot}, shown below.")
             parts.append({"type": "text", "text": f"<Picture {pic_n}>:"})
             parts.append({"type": "image_url", "image_url": {"url": media.pil_to_data_url(pil, max_side)}})
+
+        ff = kw.get("first_frame")
+        ff_label = None
+        if ff is not None:
+            batch = media.image_batch_to_pil(ff)
+            if batch:
+                pil = batch[0]
+                pic_n += 1
+                ff_label = f"<Picture {pic_n}>"
+                w, h = pil.size
+                pic_desc.append(f"{ff_label}: EDITED FIRST FRAME of the target video ({w}x{h}), from input first_frame, "
+                                "shown below. It is pinned at frame 0.")
+                parts.append({"type": "text", "text": f"{ff_label} (edited first frame):"})
+                parts.append({"type": "image_url", "image_url": {"url": media.pil_to_data_url(pil, max_side)}})
+                first_image = ff[:1] if hasattr(ff, "__getitem__") else ff
+        kw["_ff_label"] = ff_label
 
         vid_n = 0
         aud_n = 0
@@ -260,7 +281,9 @@ class MiniMaxH3R2VPrompter:
             kw.get("image_max_side", 768))
 
         user_text = prompts.build_user_text(
-            instruction=instruction, task=task, frame_anchor=frame_anchor, duration_s=eff, frames=frames,
+            instruction=instruction, task=task,
+            frame_anchor=("none" if kw.get("_ff_label") else frame_anchor), first_frame_label=kw.get("_ff_label"),
+            duration_s=eff, frames=frames,
             pictures=pics, videos=vids, audios=auds, length=length,
             allow_invented_dialogue=allow_invented_dialogue,
             asset_notes=kw.get("asset_notes", ""), extra_rules=kw.get("extra_rules", ""),

@@ -78,6 +78,25 @@ Output node:
 
 Pakai node **Preview Any** untuk melihat prompt yang dihasilkan.
 
+## Dipakai bersama MiniMax H3 V2V Edit (Minimax-H3-V2V)
+
+Prompter ini bisa menggantikan pembuat prompt bawaan [Minimax-H3-V2V](https://github.com/DrakenDrop/Minimax-H3-V2V). Labelnya sudah sama: `ref_image_*` → `<Picture 1..n>`, `first_frame` → `<Picture>` terakhir, video sumber → `<Video 1>`.
+
+```
+Load Video → MiniMax H3 V2V Conform Video ──images──┬──> V2V Edit.source_video (source_fps 24, start 0)
+                                                    ├──> Prompter.video_1
+                                                    └──> pose / depth / canny preprocessors → control_*
+Foto referensi ─────────────────────────────────────┬──> V2V Edit.ref_image_0
+                                                    └──> Prompter.image_1
+Frame 0 yang sudah diedit (opsional) ───────────────┬──> V2V Edit.first_frame
+                                                    └──> Prompter.first_frame
+Prompter.prompt ──────────────────────────────────────> V2V Edit.prompt_override
+```
+
+- Prompter: `task = video editing`, `duration_seconds = 0`, dan pilih mmproj (wajib supaya LLM melihat videonya).
+- V2V Edit: `use_source_as_reference = true`, `start_seconds = 0` (pemotongan dilakukan di Conform Video), dan `source_fps = 24`.
+- Karena kedua node menerima frame yang sama, durasi dan timestamp di prompt sama persis dengan yang dipakai H3.
+
 ## Contoh pemakaian
 
 **Edit video:** `task = video editing`, `duration_seconds = 0` (ikut panjang video, dipotong ke 17k+5 seperti node H3), `video_1` = frame video, `video_1_audio` = audionya. Suara asli otomatis dipakai ulang (fully_copy) kecuali instruksi bilang lain.

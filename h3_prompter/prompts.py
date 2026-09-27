@@ -116,6 +116,7 @@ def build_user_text(
     task: str,
     frame_anchor: str,
     duration_s: float,
+    first_frame_label: str | None = None,
     frames: int,
     pictures: list[str],
     videos: list[str],
@@ -157,6 +158,16 @@ def build_user_text(
                     f"\"{last_pic} is the last frame of [Shot N], showing ...\", retention \"{last_pic} ([Shot N] last frame): "
                     f"fully_preserved - ...\", and end the final shot with \"the shot ends on {last_pic}\" (N = final shot number)."
                 )
+    if first_frame_label:
+        if "[keyframe completion]" not in tags:
+            tags.append("[keyframe completion]")
+        lines.append(
+            f"- FIRST FRAME: {first_frame_label} is the EDITED first frame of the target video (pinned at frame 0; the "
+            f"requested change is already visible in it). Define it as a standalone \"{first_frame_label} is the edited "
+            f"first frame of [Shot 1], showing ...\", add \"{first_frame_label} ([Shot 1] first frame): fully_preserved - ...\" "
+            f"to retention_analysis, start [Shot 1] with \"the shot begins from {first_frame_label}\", and describe the new "
+            "element exactly as it looks in that frame."
+        )
     if task == "image edit" and n_pics:
         if frame_anchor.startswith("reference 1 = first frame"):
             lines.append(
