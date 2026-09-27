@@ -180,6 +180,13 @@ def build_user_text(
             "\"The target video is an edited version of <Video 1>.\" Preserve the source motion, camera, timing and anything "
             "not mentioned in the request; describe the complete resulting video shot by shot, including the edit."
         )
+        lines.append(
+            "- AUDIO FOR VIDEO EDIT: the final video keeps the ORIGINAL audio of <Video 1> (it is put back afterwards), "
+            "so H3's sound is not used. Keep overall_soundscape to ONE short sentence matching the source ambience, write "
+            "non_diegetic_music as N/A unless the user explicitly asks for music, and add no new speech. If the subject "
+            "talks in the source, describe the mouth moving as natural speech in the same rhythm as in <Video 1> (no <d> "
+            "text unless the user wrote the exact words), so the lips stay in sync with the original audio."
+        )
     if task == "video continuation":
         lines.append(
             "- VIDEO CONTINUATION: the target video starts where <Video 1> ends (same subjects, place, lighting, momentum) "

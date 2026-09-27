@@ -81,6 +81,7 @@ Pakai node **Preview Any** untuk melihat prompt yang dihasilkan.
 ## Contoh pemakaian
 
 **Edit video:** `task = video editing`, `duration_seconds = 0` (ikut panjang video, dipotong ke 17k+5 seperti node H3), `video_1` = frame video, `video_1_audio` = audionya. Suara asli otomatis dipakai ulang (fully_copy) kecuali instruksi bilang lain.
+Audio hasil edit video diambil dari video input, jadi prompt-nya otomatis dibuat hemat di bagian suara: soundscape cukup satu kalimat, musik N/A, dan tidak ada dialog baru. Kalau orangnya berbicara, sambungkan juga `video_1_audio` (dan `ref_video_audio_1` di node H3) supaya gerak bibir mengikuti audio aslinya.
 Instruksi: `ganti jaket pria jadi kulit hitam, latar jadi malam hujan`.
 
 **Reference 1 sebagai frame pertama:** `frame_anchor = reference 1 = first frame`, `image_1` = frame awal, `image_2` = wajah karakter, `image_3` = baju.
