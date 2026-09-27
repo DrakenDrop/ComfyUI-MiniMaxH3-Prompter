@@ -9,9 +9,12 @@ Label numbering mirrors ComfyUI's core `MiniMax H3 Reference to Video` node:
 
 from __future__ import annotations
 
+import os
 import time
 
 from .h3_prompter import llama_client as lc
+from .h3_prompter import local_models
+from .h3_prompter import managed_server
 from .h3_prompter import media
 from .h3_prompter import prompts
 
@@ -51,6 +54,16 @@ class MiniMaxH3R2VPrompter:
     @classmethod
     def INPUT_TYPES(cls):
         required = {
+            "model": (local_models.model_choices(_CFG), {
+                "tooltip": "GGUF dari ComfyUI/models/LLM (dicari otomatis, termasuk subfolder). Node menjalankan "
+                           "llama-server sendiri dan model tetap di VRAM sampai kamu memilih model lain. "
+                           "'(llama-server yang sudah jalan)' = pakai server dari start_llama_server.bat / server_url.",
+            }),
+            "mmproj": (local_models.mmproj_choices(_CFG), {
+                "default": local_models.MMPROJ_AUTO,
+                "tooltip": "File vision untuk model. auto = cari mmproj di folder yang sama dengan model. "
+                           "none = text only (tidak bisa melihat image/video).",
+            }),
             "instruction": ("STRING", {
                 "multiline": True,
                 "default": "",
@@ -126,7 +139,14 @@ class MiniMaxH3R2VPrompter:
             "top_p": ("FLOAT", {"default": 0.8, "min": 0.0, "max": 1.0, "step": 0.01}),
             "top_k": ("INT", {"default": 20, "min": 0, "max": 200}),
             "presence_penalty": ("FLOAT", {"default": 1.5, "min": 0.0, "max": 2.0, "step": 0.05}),
-            "server_url": ("STRING", {"default": _CFG.get("server_url", "http://127.0.0.1:8080")}),
+            "context_size": ("INT", {
+                "default": int(_CFG.get("context_size", 32768)), "min": 4096, "max": 262144, "step": 1024,
+                "tooltip": "Context llama-server yang dijalankan node (mengganti nilai ini me-restart server).",
+            }),
+            "server_url": ("STRING", {
+                "default": _CFG.get("server_url", "http://127.0.0.1:8080"),
+                "tooltip": "Hanya dipakai kalau model = '(llama-server yang sudah jalan)'.",
+            }),
             "print_to_console": ("BOOLEAN", {"default": True}),
         })
         return {"required": required, "optional": optional}
@@ -214,10 +234,29 @@ class MiniMaxH3R2VPrompter:
 
     # ------------------------------------------------------------------ main
     def generate(self, instruction, task, frame_anchor, duration_seconds, thinking, length, music,
-                 allow_invented_dialogue, max_tokens, seed, **kw):
-        server_url = (kw.get("server_url") or _CFG["server_url"]).strip()
+                 allow_invented_dialogue, max_tokens, seed,
+                 model=local_models.SERVER_DEFAULT, mmproj=local_models.MMPROJ_AUTO, **kw):
         print_tokens = kw.get("print_to_console", True)
-        lc.ensure_server(server_url, _CFG)
+        model_path, mmproj_path = local_models.resolve(model, mmproj, _CFG)
+        if model_path:
+            if mmproj_path is None and mmproj != local_models.MMPROJ_NONE:
+                lc.log(f"no matching mmproj found for {model}: running text-only (images/videos can't be seen). "
+                       "Pick the mmproj manually if the model has vision.")
+            server_url = managed_server.ensure(model_path, mmproj_path, kw.get("context_size", 32768), _CFG)
+            model_alias = os.path.splitext(os.path.basename(model_path))[0]
+            vision_ok = mmproj_path is not None
+        else:
+            server_url = (kw.get("server_url") or _CFG["server_url"]).strip()
+            lc.ensure_server(server_url, _CFG)
+            model_alias = _CFG.get("model_alias", "qwen3.8-27b")
+            vision_ok = True  # unknown: assume the hand-started server has its mmproj
+        if not vision_ok:
+            for k in list(kw):
+                if (k.startswith("image_") or k.startswith("video_")) and k[6:].isdigit():
+                    if kw[k] is not None:
+                        lc.log("text-only model: pictures/videos are labeled in the prompt but not shown to the LLM.")
+                        kw["_text_only"] = True
+                        break
 
         vframes = [media.video_len(kw[f"video_{i}"]) for i in range(1, MAX_VIDEOS + 1)
                    if kw.get(f"video_{i}") is not None]
@@ -247,6 +286,8 @@ class MiniMaxH3R2VPrompter:
             allow_invented_dialogue=allow_invented_dialogue, music=music,
             asset_notes=kw.get("asset_notes", ""), extra_rules=kw.get("extra_rules", ""),
         )
+        if kw.get("_text_only"):
+            parts = []  # a text-only server rejects image parts
         user_content = [{"type": "text", "text": user_text}, *parts] if parts else user_text
 
         think_on = thinking != "off"
@@ -257,7 +298,7 @@ class MiniMaxH3R2VPrompter:
             samp = dict(SAMPLING["on" if think_on else "off"])
 
         base = {
-            "model": _CFG.get("model_alias", "qwen3.8-27b"),
+            "model": model_alias,
             "max_tokens": int(max_tokens),
             "seed": int(seed),
             "cache_prompt": True,
@@ -384,11 +425,43 @@ class MiniMaxH3Frames:
         return (frames, float(eff))
 
 
+class _AnyType(str):
+    def __ne__(self, other):  # accepts any link type
+        return False
+
+
+class MiniMaxH3UnloadLLM:
+    """Stop the llama-server started by the prompter node (frees its VRAM)."""
+
+    CATEGORY = "MiniMax H3/Prompt"
+    FUNCTION = "unload"
+    OUTPUT_NODE = True
+    RETURN_TYPES = (_AnyType("*"),)
+    RETURN_NAMES = ("passthrough",)
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {"unload": ("BOOLEAN", {"default": True})},
+                "optional": {"trigger": (_AnyType("*"), {"tooltip": "Sambungkan output apa saja supaya unload terjadi setelah node itu selesai."})}}
+
+    @classmethod
+    def IS_CHANGED(cls, **_):
+        return float("nan")  # always run
+
+    def unload(self, unload, trigger=None):
+        if unload:
+            stopped = managed_server.stop(_CFG)
+            lc.log("managed llama-server stopped, VRAM freed." if stopped else "no managed llama-server was running.")
+        return (trigger,)
+
+
 NODE_CLASS_MAPPINGS = {
     "MiniMaxH3R2VPrompter": MiniMaxH3R2VPrompter,
     "MiniMaxH3Frames": MiniMaxH3Frames,
+    "MiniMaxH3UnloadLLM": MiniMaxH3UnloadLLM,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "MiniMaxH3R2VPrompter": "MiniMax H3 R2V Prompter (llama.cpp)",
     "MiniMaxH3Frames": "MiniMax H3 Duration → Frames",
+    "MiniMaxH3UnloadLLM": "MiniMax H3 Unload LLM (free VRAM)",
 }

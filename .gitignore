@@ -1,2 +1,4 @@
 config.json
 __pycache__/
+.managed_server.json
+llama-server.log

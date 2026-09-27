@@ -7,6 +7,7 @@ Format output mengikuti [official Full-Reference prompt guide MiniMax H3](https:
 
 ## Fitur
 
+- **Deteksi model otomatis**: dropdown berisi semua GGUF di `ComfyUI/models/LLM`, lengkap dengan mmproj yang cocok. llama-server dijalankan otomatis, dan model tetap di VRAM sampai kamu memilih model lain.
 - **Thinking benar-benar OFF** (default). Tiga lapis pengaman:
   1. `chat_template_kwargs: {"enable_thinking": false}` di setiap request;
   2. *prefill*: jawaban model langsung dimulai dari `subject_definitions:`, jadi model tidak sempat mulai berpikir;
@@ -27,18 +28,21 @@ Format output mengikuti [official Full-Reference prompt guide MiniMax H3](https:
 
 **Linux:** pakai build release, atau compile dengan `-DGGML_CUDA=ON`.
 
-## 2. Jalankan server (model menetap di VRAM)
+## 2. Pilih model (otomatis dari `ComfyUI/models/LLM`)
 
-Edit `LLAMA_DIR` di `start_llama_server.bat`, lalu double-click. Saat pertama kali dijalankan, model otomatis di-download dari Hugging Face:
+Node memindai **`ComfyUI/models/LLM`** (termasuk subfolder, misalnya `LLM/GGUF/...` dari ThinkingLLM) dan menampilkan semua file `.gguf` di dropdown **model**. Tidak perlu download ulang.
 
-- `Qwen3.8-27B-UD-Q4_K_XL.gguf` (~17.6 GB)
-- `mmproj` (vision, ~0.9 GB), dibutuhkan supaya LLM bisa melihat gambar dan video.
+- **model**: pilih GGUF-nya. Node menjalankan `llama-server` sendiri di port 8090 (`-ngl 999`, `--no-mmap`), dan model **tetap di VRAM** antar-run maupun saat ComfyUI di-restart. Server baru di-restart kalau kamu memilih model, mmproj, atau `context_size` yang lain.
+- **mmproj** (vision): `auto` memilih mmproj di folder yang sama. Yang diutamakan adalah nama yang cocok dengan model (mis. `mmproj-Qwen3.8-27B-ABLITERATED-F16`), atau nama generik seperti `mmproj-F16.gguf` kalau foldernya hanya berisi satu model. Kalau ada keraguan, node memakai mode text-only dan menulis peringatan di console. Pilih mmproj secara manual dari dropdown dalam kasus itu. mmproj yang salah pasangan membuat llama-server crash.
+- Syarat satu-satunya: node harus tahu lokasi `llama-server.exe`. Taruh llama.cpp di `C:\llama.cpp`, atau salin `config.example.json` menjadi `config.json` lalu isi `llama_server_path`. Model tambahan di luar `models/LLM` bisa ditambahkan lewat `extra_model_dirs`.
+- File model yang baru ditambahkan akan muncul setelah browser di-refresh.
+- Node **MiniMax H3 Unload LLM** mematikan server itu untuk membebaskan VRAM. Sambungkan `trigger` ke output prompter kalau kamu mau VRAM langsung dilepas setelah prompt jadi.
 
-Parameter yang dipakai: `-ngl 999` (semua layer di GPU), `--no-mmap` (dimuat penuh), `-c 32768`, `-np 1`. Selama jendela server terbuka, model tetap ada di VRAM, termasuk saat ComfyUI di-restart.
+### Alternatif: jalankan server sendiri
 
-> VRAM 96 GB: Q4_K_XL + KV cache butuh sekitar 20 GB, jadi masih banyak sisa untuk H3. Kalau mau kualitas lebih tinggi, ganti ke `UD-Q6_K_XL` (25 GB) atau `Q8_0` (29 GB). Kecepatan turun sedikit karena bobot yang dibaca per token lebih besar.
+Pilih model `(llama-server yang sudah jalan)` dan jalankan `start_llama_server.bat`. Edit `LLAMA_DIR`, lalu double-click. Model default di-download otomatis dari Hugging Face (`unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL` + mmproj). Bisa juga diganti ke file lokal dengan `-m ... --mmproj ...`. Server ini memakai port 8080 dan `server_url`.
 
-**Opsional, autostart:** salin `config.example.json` menjadi `config.json`, isi `llama_server_path`, lalu set `"autostart": true`. Server akan dinyalakan otomatis saat ComfyUI boot. Kalau server sudah jalan, server yang ada dipakai ulang.
+> VRAM 96 GB: Q4_K_XL + KV cache butuh sekitar 20 GB, jadi masih banyak sisa untuk H3. Untuk kualitas lebih tinggi, pakai `UD-Q6_K_XL` (25 GB) atau `Q8_0` (29 GB). Jangan menjalankan dua server sekaligus (bat + dropdown), karena modelnya akan terpakai dua kali di VRAM.
 
 ## 3. Instal node
 
