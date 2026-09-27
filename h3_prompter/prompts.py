@@ -78,10 +78,10 @@ retention_analysis
 
 detailed_description
 - First sentence: visual style (e.g. live-action cinematic, realistic sitcom, 3D animation, anime) and lighting.
-- Shots in playback order: "[Shot 1] ..." with no timestamp, later cuts "[Shot N] At MM:SS.mmm, the shot cuts to ...". Timestamps strictly increase and stay below the target duration. Prefer few shots (about one per 3-5 seconds); one continuous shot is fine for short clips.
+- Shots in playback order: "[Shot 1] ..." with no timestamp, later cuts "[Shot N] At MM:SS.mmm, the shot cuts to ...". Timestamps strictly increase and stay below the target duration. Prefer few shots (about one per 3-5 seconds); one continuous shot is fine for short clips. Timestamps appear ONLY in that "[Shot N] At MM:SS.mmm" cut syntax: never write in-shot timestamps such as "At 0.5 s", "at 2 seconds" or "around 3.0 s".
 - Frame anchors in natural phrasing: "the shot begins from <Picture 1>", "the shot's keyframe corresponds to <Picture 2>", "the shot ends on <Picture 3>". These phrases are only for pictures, never for <Video N>.
 - Video editing / continuation: describe the COMPLETE resulting video, not only the change; cite <Video N> naturally where its source state, structure or continuation applies. Newly added actions, backgrounds or plot elements are legitimate additions.
-- Describe what is actually visible in the supplied frames: the real setting, props, colors, lighting direction, the subject's hair and features, each action in order with approximate timing, and the real camera behavior (e.g. "a static medium shot", "the camera slowly pushes in"). Never hedge ("whether static or moving", "any visible text", "if present") and never write editing-process or meta language ("unchanged from the source", "frame by frame", "no cuts added", "without any alteration"): write the final video as if describing it to someone who has not seen the source.
+- Describe what is actually visible in the supplied frames: the real setting, props, colors, lighting direction, the subject's hair and features, the main actions in order, and the real camera behavior (e.g. "a static medium shot", "the camera slowly pushes in"). Never hedge ("whether static or moving", "any visible text", "if present") and never write editing-process or meta language ("unchanged from the source", "frame by frame", "no cuts added", "without any alteration"): write the final video as if describing it to someone who has not seen the source.
 - Keep framing statements consistent across the prompt (do not call the subject off-center in one sentence and centered in the next).
 - When the request is brief (e.g. "white dress"), make the new element concrete and plausible: cut, length, sleeves, neckline, fabric, how it moves and catches the light.
 - Insert each label at a subject's first appearance in every shot and briefly repeat key attributes ("<Subject 2>, the woman in the red coat from Shot 1").
@@ -191,6 +191,14 @@ def build_user_text(
             "\"The target video is an edited version of <Video 1>.\" Preserve the source motion, camera, timing and anything "
             "not mentioned in the request; describe the complete resulting video shot by shot, including the edit."
         )
+        lines.append(
+            "- MOTION IN VIDEO EDIT: H3 copies the motion and timing from <Video 1> (and the pose control), so do NOT "
+            "narrate the motion beat by beat and write no timestamps inside a shot. Summarize the action in one or two "
+            "general sentences (e.g. 'she sings into the microphone with the same gestures, head tilts and timing as in "
+            "<Video 1>'). Use '[Shot N] At MM:SS.mmm' only for cuts that really exist in the source frames. Spend the "
+            "words on the edited element and on the stable look of the scene (setting, lighting, framing, camera). Do "
+            "not add events, effects, lighting or color changes that are neither visible in the frames nor requested."
+        )
         if audios:
             lines.append(
                 "- AUDIO FOR VIDEO EDIT: the soundtrack of <Video 1> is supplied as an <Audio> asset and reused by H3 "
@@ -253,6 +261,30 @@ def _fix_ts(m: re.Match) -> str:
     return f"{prefix}At {int(mm):02d}:{ss}.{ms.ljust(3, '0')}"
 
 
+_INSHOT_TS = re.compile(
+    r"(?<!\])(?P<lead>^|(?<=[.!?;:]\s)|(?<=\n))\s*(?:At|Around|By)\s+(?:about\s+|around\s+)?"
+    r"(?:\d{1,2}:\d{2}(?:\.\d+)?|\d+(?:\.\d+)?)\s*(?:s|sec|secs|seconds?)?\b(?:\s+mark)?\s*,?\s*",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _strip_inshot_timestamps(t: str) -> str:
+    """'At 1.0 s the right hand ...' -> 'The right hand ...' (timestamps belong only to '[Shot N] At ...' cuts)."""
+    def repl(m: re.Match) -> str:
+        return m.group("lead") + "\x00"
+
+    out = []
+    for line in t.split("\n"):
+        parts = re.split(r"(\[Shot \d+\]\s*At\s+\d{1,2}:\d{2}(?:\.\d+)?,?)", line)
+        for i, seg in enumerate(parts):
+            if i % 2 == 0:  # not a '[Shot N] At ...' token
+                seg = _INSHOT_TS.sub(repl, seg)
+                seg = re.sub("\x00\\s*([a-z])", lambda m: m.group(1).upper(), seg).replace("\x00", "")
+            parts[i] = seg
+        out.append("".join(parts))
+    return "\n".join(out)
+
+
 def clean_output(text: str) -> str:
     t = text.strip()
     t = _FENCE.sub("", t).strip()
@@ -261,6 +293,8 @@ def clean_output(text: str) -> str:
     if idx > 0:
         t = t[idx:]
     t = _SHOT1_TS.sub("[Shot 1] ", t)
+    t = re.sub(r"(\[Shot 1\] )([a-z])", lambda m: m.group(1) + m.group(2).upper(), t)
+    t = _strip_inshot_timestamps(t)
     t = _BAD_LANG.sub(lambda m: f"<d>[{m.group(1)}] ", t)
     t = _SHOT_TS.sub(_fix_ts, t)
     # one blank line between sections
