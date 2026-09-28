@@ -301,6 +301,13 @@ def sam3_video_mask(frames, sam3_model, sam3_clip, prompt: str, threshold: float
         images=frames, model=sam3_model, conditioning=cond, detection_threshold=threshold,
         max_objects=max_objects, detect_interval=1))[0]
     masks = _a(nodes_sam3.SAM3_TrackToMask.execute(track_data=track, object_indices=""))[0]
+    n_obj = 0
+    try:
+        packed = track.get("packed_masks") if isinstance(track, dict) else None
+        n_obj = int(packed.shape[1]) if packed is not None else 0
+    except Exception:  # noqa: BLE001
+        pass
+    sam3_video_mask.last_object_count = n_obj
     return (masks > 0.5).float()
 
 
@@ -360,6 +367,8 @@ def mask_rule(prompt: str, invert: bool) -> str:
         what = f"only the regions showing {names} are regenerated (each one edited as the request says)"
     else:
         what = f"only the region showing {names} is regenerated"
+    what += (" - the mask covers EVERY matching element in the frame (e.g. the clothes of all people), so apply the "
+             "change to all of them unless the request names only one")
     return (
         f"MASKED EDIT: {what}; every other pixel is copied from <Video 1> unchanged. Put the detail into the new "
         "content of the masked area (look, material, how it follows the body, contact shadows and edges where it "

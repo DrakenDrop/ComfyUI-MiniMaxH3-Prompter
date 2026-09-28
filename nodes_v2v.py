@@ -223,9 +223,11 @@ class MiniMaxH3V2VEditLLM:
         rules = v2v.PRESET_RULES.get(edit_mode, "")
         if mask_info and len(mask_info) > 2:  # reference-only: old content hidden, whole frame re-rendered
             what = f"'{mask_info[0]}'" if mask_info[0] else "the masked element"
-            rules += ("\nREPLACED ELEMENT: in <Video 1> the old " + what + " is hidden (grey), so it must be drawn "
-                      "fresh from the request/pictures; everything else follows <Video 1>. Describe the new element "
-                      "concretely (type, color, material, cut, fit) - never the old one.")
+            rules += ("\nREPLACED ELEMENT: in <Video 1> the old " + what + " is hidden (grey) on EVERY person/element "
+                      "it matches, so it must be drawn fresh from the request/pictures for each of them; everything "
+                      "else follows <Video 1>. If there are several people, describe the new element for each one "
+                      "(the same, unless the request says otherwise). Describe it concretely (type, color, material, "
+                      "cut, fit) - never the old one.")
         elif mask_info:
             rules += "\n" + (v2v.mask_rule(*mask_info) if mask_info[0] else
                              "MASKED EDIT: only the masked region is regenerated; everything else is copied from "
@@ -415,8 +417,10 @@ class MiniMaxH3V2VEditLLM:
             if len(self._mask_cache) > 8:
                 self._mask_cache.clear()
             self._mask_cache[key] = m
+        n_obj = getattr(v2v.sam3_video_mask, "last_object_count", 0)
         lc.log(f"V2V: SAM3 mask '{prompt}'{' (inverted)' if invert else ''}: "
-               f"{float(m.mean()) * 100:.1f}% of the frame regenerated")
+               + (f"{n_obj} object(s) tracked, " if n_obj else "")
+               + f"{float(m.mean()) * 100:.1f}% of the frame")
         return m, (prompt, invert)
 
 
