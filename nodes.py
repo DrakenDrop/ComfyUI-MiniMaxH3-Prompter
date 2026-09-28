@@ -167,6 +167,11 @@ class MiniMaxH3R2VPrompter:
                 "tooltip": "LLM juga menulis waktu aksi di dalam shot (mis. 'At 1.5 s she turns'). Eksperimental - bukan "
                            "format resmi H3. Diabaikan untuk video editing.",
             }),
+            "frame_count": ("INT", {
+                "default": 0, "min": 0, "max": 362, "step": 1,
+                "tooltip": "Panjang video dalam frame (@24fps): 124, 141, ... 345, 362. Kalau > 0, menggantikan "
+                           "duration_seconds. Nilai di luar grid 17k+5 dibulatkan ke yang terdekat.",
+            }),
         })
         return {"required": required, "optional": optional}
 
@@ -285,7 +290,16 @@ class MiniMaxH3R2VPrompter:
         vframes = [media.video_len(kw[f"video_{i}"]) for i in range(1, MAX_VIDEOS + 1)
                    if kw.get(f"video_{i}") is not None]
         vframes = [n for n in vframes if n > 0]
-        if duration_seconds <= 0:
+        fc_in = int(kw.get("frame_count", 0) or 0)
+        if fc_in > 0:
+            n = max(5, min(fc_in, H3_MAX_TRAINED_FRAMES))
+            down = 5 + 17 * ((n - 5) // 17)
+            up = min(down + 17, H3_MAX_TRAINED_FRAMES)
+            frames = up if (up - n) <= (n - down) else down
+            if frames != fc_in:
+                lc.log(f"frame_count {fc_in} is not on the 17k+5 grid -> using {frames}.")
+            eff = frames / media.H3_FPS
+        elif duration_seconds <= 0:
             if vframes and task in ("video editing", "auto"):
                 n_src = vframes[0]
                 if n_src > H3_MAX_TRAINED_FRAMES:

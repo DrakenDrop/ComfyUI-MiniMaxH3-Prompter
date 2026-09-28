@@ -179,6 +179,11 @@ class MiniMaxH3V2VEditLLM:
                 "tooltip": "separate = inpaint patch on its own at mask_strength; combined = mask rides on the first "
                            "control (pose) patch with that control's strength (old behaviour).",
             }),
+            "frame_count": ("INT", {
+                "default": 0, "min": 0, "max": 362, "step": 1,
+                "tooltip": "Panjang video H3 dalam frame (@24fps): 124, 141, ... 345, 362. 0 = otomatis dari video sumber "
+                           "+ max_seconds. Nilai di luar grid 17k+5 dibulatkan ke yang terdekat.",
+            }),
         })
         return {"required": required, "optional": optional}
 
@@ -227,7 +232,7 @@ class MiniMaxH3V2VEditLLM:
             length, seed, model_patch=None, control_pose=None, control_depth=None, control_edge=None,
             first_frame=None, sam3_model=None, sam3_clip=None, mask_prompt="", mask_invert=False, mask_grow=12,
             mask_threshold=0.5, mask_max_objects=8, mask=None, use_mask=True, hide_masked_in_reference=True, mask_strength=1.0,
-            mask_patch="separate", audio_vae=None, source_audio=None, reuse_audio=False, asset_notes="",
+            mask_patch="separate", frame_count=0, audio_vae=None, source_audio=None, reuse_audio=False, asset_notes="",
             prompt_override="", motion_lock=1.0, pose_strength=-1.0, depth_strength=-1.0, edge_strength=-1.0,
             structure_end_percent=-1.0, use_source_as_reference=True, start_seconds=0.0, max_seconds=15.0,
             resolution="768p (native)", ref_image_size="max", video_sample_fps=2.0, unload_llm_after_prompt=False,
@@ -235,7 +240,7 @@ class MiniMaxH3V2VEditLLM:
         _require_h3()
 
         # ---- timeline + canvas (the LLM sees exactly these frames) ------------------------------
-        tl = v2v.Timeline(source_video.shape[0], source_fps, start_seconds, max_seconds)
+        tl = v2v.Timeline(source_video.shape[0], source_fps, start_seconds, max_seconds, frame_count=frame_count)
         src = tl.take(source_video, "source_video")
         width, height = v2v.canvas_for(src.shape[2], src.shape[1], v2v.RESOLUTIONS[resolution])
         src = v2v.resize_frames(src, width, height)
@@ -399,11 +404,15 @@ class MiniMaxH3ConformVideo:
                 "max_seconds": ("FLOAT", {"default": 15.0, "min": 0.25, "max": 15.1, "step": 0.01}),
                 "resolution": (list(v2v.RESOLUTIONS.keys()), {"default": "768p (native)"}),
             },
-            "optional": {"audio": ("AUDIO",)},
+            "optional": {
+                "audio": ("AUDIO",),
+                "frame_count": ("INT", {"default": 0, "min": 0, "max": 362, "step": 1,
+                                        "tooltip": "0 = otomatis; selain itu dibulatkan ke grid 17k+5 terdekat."}),
+            },
         }
 
-    def run(self, images, fps, start_seconds, max_seconds, resolution, audio=None):
-        tl = v2v.Timeline(images.shape[0], fps, start_seconds, max_seconds)
+    def run(self, images, fps, start_seconds, max_seconds, resolution, audio=None, frame_count=0):
+        tl = v2v.Timeline(images.shape[0], fps, start_seconds, max_seconds, frame_count=frame_count)
         frames = tl.take(images)
         w, h = v2v.canvas_for(frames.shape[2], frames.shape[1], v2v.RESOLUTIONS[resolution])
         frames = v2v.resize_frames(frames, w, h)

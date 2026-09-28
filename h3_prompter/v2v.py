@@ -35,6 +35,14 @@ def align_down(n: int) -> int:
     return ((n - 5) // 17) * 17 + 5
 
 
+def snap_frames(n: int) -> int:
+    """Nearest valid H3 length (17k+5, 5..362); ties go up."""
+    n = max(MIN_FRAMES, min(int(n), MAX_FRAMES))
+    down = align_down(n)
+    up = min(down + 17, MAX_FRAMES)
+    return up if (up - n) <= (n - down) else down
+
+
 def canvas_for(width: int, height: int, short_edge: int = 768) -> tuple[int, int]:
     """Same rule as core adapt_canvas(): aspect ratio of the input, short edge `short_edge`, area cap, x32."""
     ratio = width / height
@@ -69,7 +77,8 @@ def resize_frames(frames, width: int, height: int, method: str = "bilinear"):
 class Timeline:
     """Maps a source clip (any fps) onto H3's 24 fps / 17k+5 grid."""
 
-    def __init__(self, src_frames: int, src_fps: float, start_seconds: float = 0.0, max_seconds: float = 15.0):
+    def __init__(self, src_frames: int, src_fps: float, start_seconds: float = 0.0, max_seconds: float = 15.0,
+                 frame_count: int = 0):
         import torch
 
         if src_frames < 1:
@@ -91,9 +100,19 @@ class Timeline:
         # Snap to the NEAREST 17k+5 length (5 s = 120 frames -> 124, not 107). When that is longer than the
         # source, the last source frame is held for the few missing frames (at most MAX_PAD_FRAMES).
         self.padded_frames = 0
-        if up > n and up - n <= MAX_PAD_FRAMES and (up - n) <= (n - down):
+        avail_frames = int(math.floor(avail * H3_FPS + 1e-6))
+        if frame_count and frame_count > 0:  # explicit length wins over max_seconds
+            self.frame_count = snap_frames(frame_count)
+            if self.frame_count != int(frame_count):
+                log.warning("MiniMax H3 V2V: frame_count %d is not on the 17k+5 grid -> using %d.",
+                            int(frame_count), self.frame_count)
+            self.padded_frames = max(0, self.frame_count - avail_frames)
+            if self.padded_frames:
+                log.warning("MiniMax H3 V2V: the source has only %d frames (@24fps) after start_seconds; the last "
+                            "frame is held for %d frames.", avail_frames, self.padded_frames)
+        elif up > n and up - n <= MAX_PAD_FRAMES and (up - n) <= (n - down):
             self.frame_count = up
-            self.padded_frames = max(0, up - int(math.floor(avail * H3_FPS + 1e-6)))
+            self.padded_frames = max(0, up - avail_frames)
         else:
             self.frame_count = down
         if self.frame_count < MIN_FRAMES:
