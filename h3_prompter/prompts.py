@@ -249,6 +249,11 @@ def build_user_text(
             "and do not describe or name the old element anywhere (summary included)."
         )
         lines.append(
+            "- SKIN IN VIDEO EDIT: the person's skin tone, complexion and makeup stay exactly as in <Video 1>; do not "
+            "describe skin color with new words (no 'fair', 'porcelain', 'tanned', 'glowing'); if needed write only "
+            "'the same skin tone as in <Video 1>'."
+        )
+        lines.append(
             "- MOTION IN VIDEO EDIT: do NOT describe the motion, actions, gestures or expressions at all - H3 takes "
             "them from <Video 1> (and the pose control). Write exactly one sentence for it, e.g. '<Subject 1> performs "
             "exactly the same motion, gestures, expressions, lip movements and timing as in <Video 1>.' No timestamps "

@@ -179,6 +179,20 @@ H3 menggambar ulang seluruh frame, jadi exposure, white balance, atau pencahayaa
    ```
    Warna dan kecerahan tiap frame dicocokkan lagi ke video asli (Lab, dihaluskan antar-frame supaya tidak flicker). Kalau warna elemen yang diedit (misalnya dress merah) ikut tertarik ke warna lama, turunkan `strength`.
 
+## Skin tone berbeda dari input? (Match Skin Tone to Source)
+
+Node **MiniMax H3 Match Skin Tone to Source** (setelah VAE Decode, sebelum Create Video):
+
+```
+VAEDecode ─> images
+V2V Edit + LLM.source_frames ─> source_frames
+→ CreateVideo
+```
+
+Tanpa mask: kulit dideteksi otomatis di kedua video. Yang diukur hanya piksel yang kulit di **kedua** video pada posisi yang sama (baju baru atau baju lama tidak ikut dihitung), lalu warnanya digeser ke warna kulit sumber, hanya di area kulit, dengan tepi halus dan statistik yang dihaluskan antar-frame. Latar dan baju tidak disentuh. Bisa dirangkai dengan Match Color (Match Color dulu, lalu Match Skin Tone).
+
+Prompt juga tidak lagi mendeskripsikan warna kulit dengan kata baru ("fair", "porcelain", "glowing"), karena kata-kata itu membuat H3 mengubah warna kulit.
+
 ## Contoh pemakaian
 
 **Edit video:** `task = video editing`, `duration_seconds = 0` (ikut panjang video, dipotong ke 17k+5 seperti node H3), `video_1` = frame video, `video_1_audio` = audionya. Suara asli otomatis dipakai ulang (fully_copy) kecuali instruksi bilang lain.

@@ -326,12 +326,41 @@ class MiniMaxH3MatchColor:
         return (v2v.match_color(images, source_frames, strength=strength, smooth_frames=smooth_frames),)
 
 
+class MiniMaxH3MatchSkinTone:
+    """After VAE Decode: give the skin of the edited video the exact skin tone of the source (no mask needed)."""
+
+    CATEGORY = CATEGORY
+    FUNCTION = "run"
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("images",)
+    DESCRIPTION = ("Matches the skin tone of the H3 result to the source video. Skin is detected automatically in both "
+                   "videos; only pixels that are skin in BOTH at the same place are measured (so a new/old outfit does "
+                   "not count), and the correction is applied to the skin only, feathered and smoothed over time.")
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "images": ("IMAGE", {"tooltip": "Decoded H3 result (VAE Decode)."}),
+                "source_frames": ("IMAGE", {"tooltip": "source_frames output of V2V Edit + LLM (same frames/size)."}),
+                "strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.05}),
+                "smooth_frames": ("INT", {"default": 6, "min": 0, "max": 24,
+                                          "tooltip": "Temporal smoothing radius of the skin statistics (no flicker)."}),
+            },
+        }
+
+    def run(self, images, source_frames, strength, smooth_frames):
+        return (v2v.match_skin_tone(images, source_frames, strength=strength, smooth_frames=smooth_frames),)
+
+
 NODE_CLASS_MAPPINGS = {
+    "MiniMaxH3MatchSkinTone": MiniMaxH3MatchSkinTone,
     "MiniMaxH3MatchColor": MiniMaxH3MatchColor,
     "MiniMaxH3V2VEditLLM": MiniMaxH3V2VEditLLM,
     "MiniMaxH3PrompterConformVideo": MiniMaxH3ConformVideo,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
+    "MiniMaxH3MatchSkinTone": "MiniMax H3 Match Skin Tone to Source",
     "MiniMaxH3MatchColor": "MiniMax H3 Match Color to Source (lighting fix)",
     "MiniMaxH3V2VEditLLM": "MiniMax H3 V2V Edit + LLM (Fun ControlNet)",
     "MiniMaxH3PrompterConformVideo": "MiniMax H3 Conform Video (24 fps)",

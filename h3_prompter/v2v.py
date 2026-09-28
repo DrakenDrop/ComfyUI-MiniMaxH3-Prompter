@@ -369,3 +369,86 @@ def match_color(images, reference, strength: float = 1.0, smooth_frames: int = 4
         new = lab + (new - lab) * float(strength)
         out.append(_lab_to_srgb(new).to(images.dtype))
     return torch.cat(out, dim=0)
+
+
+# ----------------------------------------------------------------------------- skin tone match (no mask needed)
+def skin_prob(x):
+    """Soft skin likelihood [N,H,W] from RGB 0..1 (YCrCb chroma ellipse; hair, black/white cloth, walls -> ~0)."""
+    import torch
+
+    r, g, b = x[..., 0] * 255, x[..., 1] * 255, x[..., 2] * 255
+    y = 0.299 * r + 0.587 * g + 0.114 * b
+    cr = (r - y) * 0.713 + 128
+    cb = (b - y) * 0.564 + 128
+    d = ((cr - 153.0) / 9.0) ** 2 + ((cb - 108.0) / 10.0) ** 2
+    p = torch.exp(-0.5 * d)
+    p = p * ((y - 35.0) / 25.0).clamp(0, 1) * ((250.0 - y) / 20.0).clamp(0, 1)  # not near black / blown white
+    return p
+
+
+def match_skin_tone(images, reference, strength: float = 1.0, smooth_frames: int = 6, chunk: int = 16,
+                    feather: int = 7):
+    """Give the skin in `images` (H3 result) the skin tone of `reference` (source frames, same motion).
+
+    No mask: skin is found automatically. Statistics use only pixels that are skin in BOTH videos at the same
+    place (so a beige dress in the source or a new outfit in the result does not count), then the colour shift is
+    applied to the skin of the result only, feathered, with per-frame stats smoothed over time (no flicker)."""
+    import torch
+    import torch.nn.functional as F
+
+    n, h, w, _ = images.shape
+    ref = reference[..., :3]
+    if ref.shape[0] != n:
+        idx = torch.linspace(0, ref.shape[0] - 1, n).round().long() if ref.shape[0] > 1 else torch.zeros(n).long()
+        ref = ref[idx]
+    if ref.shape[1] != h or ref.shape[2] != w:
+        ref = F.interpolate(ref.movedim(-1, 1).float(), size=(h, w), mode="bilinear", align_corners=False).movedim(1, -1)
+
+    def wstats(lab, wgt):
+        tot = wgt.sum(dim=(1, 2))
+        t = tot.clamp(min=1e-6)[:, None]
+        mu = (lab * wgt[..., None]).sum(dim=(1, 2)) / t
+        sd = (((lab - mu[:, None, None]) ** 2 * wgt[..., None]).sum(dim=(1, 2)) / t).sqrt()
+        return mu, sd.clamp(min=1e-3), tot
+
+    mo, so, mr, sr, tw = [], [], [], [], []
+    for i in range(0, n, chunk):
+        x = images[i:i + chunk, ..., :3].float()
+        rf = ref[i:i + chunk].to(x.device).float()
+        wgt = skin_prob(x) * skin_prob(rf)
+        a, b, t = wstats(_srgb_to_lab(x), wgt)
+        c, d, _ = wstats(_srgb_to_lab(rf), wgt)
+        mo.append(a); so.append(b); mr.append(c); sr.append(d); tw.append(t)
+    mu_o, sd_o, mu_r, sd_r, tot = (torch.cat(v) for v in (mo, so, mr, sr, tw))
+
+    # frames with (almost) no shared skin borrow the stats of the others through the weighted smoothing
+    wt = (tot / (h * w) / 0.002).clamp(0, 1)  # full weight from 0.2 % of the frame
+    if float(wt.sum()) <= 0:
+        return images
+    if smooth_frames > 0 and n > 1:
+        k = 2 * smooth_frames + 1
+
+        def smooth(v):
+            num = F.avg_pool1d(F.pad((v * wt[:, None]).T.unsqueeze(0), (smooth_frames, smooth_frames),
+                                     mode="replicate"), k, 1)[0].T
+            den = F.avg_pool1d(F.pad(wt[None, None], (smooth_frames, smooth_frames), mode="replicate"), k, 1)[0, 0]
+            return num / den.clamp(min=1e-6)[:, None]
+        mu_o, sd_o, mu_r, sd_r = smooth(mu_o), smooth(sd_o), smooth(mu_r), smooth(sd_r)
+        wt = torch.ones_like(wt)
+    ratio = (sd_r / sd_o).clamp(0.8, 1.25)  # mild contrast match only
+
+    out = []
+    for i in range(0, n, chunk):
+        x = images[i:i + chunk, ..., :3].float()
+        lab = _srgb_to_lab(x)
+        sl = slice(i, i + x.shape[0])
+        new = (lab - mu_o[sl, None, None]) * ratio[sl, None, None] + mu_r[sl, None, None]
+        alpha = skin_prob(x)
+        if feather > 0:
+            alpha = F.avg_pool2d(alpha[:, None], 2 * feather + 1, 1, feather, count_include_pad=False)[:, 0]
+        alpha = (alpha * 1.6).clamp(0, 1) * float(strength) * wt[sl, None, None]
+        res = _lab_to_srgb(lab + (new - lab) * alpha[..., None])
+        if images.shape[-1] == 4:
+            res = torch.cat([res, images[i:i + chunk, ..., 3:].float()], dim=-1)
+        out.append(res.to(images.dtype))
+    return torch.cat(out, dim=0)
