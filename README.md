@@ -104,33 +104,13 @@ Node **MiniMax H3 V2V Edit + LLM (Fun ControlNet)** menggabungkan V2V Edit ([Min
 - Resolusi: aspect ratio mengikuti video sumber (sisi pendek 768, maks 768×1344, kelipatan 32).
 - Preset `remove_object` dan `change_background` masih baru: kekuatan ControlNet-nya belum teruji, jadi atur `motion_lock` / strength manual kalau hasilnya kurang pas.
 
-### Mask dengan prompt teks (SAM 3.1)
+### Audio
 
-Dengan mask, **hanya area yang di-mask yang dibuat ulang**. Piksel lain, termasuk wajah kalau tidak ikut di-mask, disalin langsung dari video asli lewat inpainting Fun ControlNet-Union.
+Node V2V tidak mengurus audio. Sambungkan audio dari Load Video (atau `audio` dari Conform Video kalau memakai `start_seconds`) langsung ke Create/Combine Video. Prompt otomatis dibuat hemat di bagian suara (soundscape satu kalimat, musik N/A, tanpa dialog baru).
 
-1. Download `sam3.1_multiplex_fp16.safetensors` dari [Comfy-Org/sam3.1](https://huggingface.co/Comfy-Org/sam3.1) ke `models/checkpoints/`.
-2. `CheckpointLoaderSimple` (sam3.1) → `MODEL` ke **sam3_model**, `CLIP` ke **sam3_clip**.
-3. Isi **mask_prompt** dalam bahasa Inggris, boleh beberapa dipisah koma, misalnya `shirt, pants`, `person`, `red car`, `dog`.
+### Edit sejak frame pertama
 
-| preset | mask default kalau `mask_prompt` kosong |
-|---|---|
-| `change_outfit` | `clothes` (baju saja; wajah & rambut tetap asli) |
-| `replace_person` | `person` |
-| `change_background` | `person` **dibalik** (semua kecuali orang dibuat ulang) |
-| preset lain | tanpa mask, kecuali `mask_prompt` diisi |
-
-- **`mask_strength`** (default 1.0) dan **`mask_patch`** (`separate` / `combined with first control`): inpainting Fun ControlNet mengisi area mask dengan **hitam** di sinyal kontrolnya (begitu model ini dilatih). Kalau kekuatannya kurang, warna hitam itu tembus ke hasil (baju jadi hitam atau ada outline gelap). Karena itu inpaint sekarang punya patch sendiri dengan kekuatannya sendiri; naikkan ke 1.2–1.3 kalau masih ada tepi gelap. `mask_grow` default diturunkan ke 6 px.
-- **`mask_mode`**: `inpaint` (default) = hanya area mask yang digambar ulang. `reference only` = area mask (misalnya baju lama) hanya **disembunyikan** dari `<Video 1>`, lalu seluruh frame digambar ulang mengikuti **pose saja** (depth/edge otomatis 0). Baju baru bebas bentuk dan panjangnya, dan H3 tidak bisa menyalin baju lama.
-- **`hide_masked_in_reference`** (default on): area mask di referensi `<Video 1>` dibuat abu-abu, supaya H3 tidak menyalin isi lama (misalnya dress hitam) kembali ke area yang diedit.
-- **`use_mask`** (on/off): matikan untuk mengabaikan semua mask (input `mask`, SAM3, dan default preset) tanpa melepas kabel. Seluruh frame dibuat ulang, dan gerakan tetap mengikuti pose/depth/edge.
-- **Beberapa area sekaligus**: pisahkan dengan koma, misalnya `hat, shoes`. Semua area digabung jadi satu mask, dan tiap area diedit sesuai instruction ("topinya jadi merah, sepatunya jadi sneakers putih"). Batas jumlah objek yang dilacak diatur lewat `mask_max_objects` (default 8; sepasang sepatu = 2 objek).
-- `mask_invert`: membuat ulang semua **kecuali** objek yang di-prompt.
-- `mask_grow` (default 12 px): memperbesar mask, supaya ada ruang untuk lengan yang lebih panjang, rambut, atau bayangan. Naikkan kalau baju baru lebih besar dari baju lama.
-- `mask_threshold`: turunkan kalau SAM3 tidak menemukan objeknya.
-- `mask`: bisa juga memakai mask sendiri (MASK) sebagai pengganti SAM3.
-- Output **mask** bisa di-preview (Convert Mask to Image → Preview) untuk mengecek area yang akan diedit.
-- Mask di-cache: mengubah `motion_lock` atau setting sampler tidak menjalankan SAM3 lagi.
-- Butuh `model_patch` (Fun ControlNet-Union), karena inpainting-nya berjalan lewat model itu.
+LLM wajib menulis elemen baru sebagai sesuatu yang sudah ada sejak frame 0 ("wears ... throughout the whole video"), tanpa kata "now wears / replaced / instead of" dan tanpa menyebut elemen lama. Kata-kata itu bisa dibaca H3 sebagai adegan pergantian, sehingga elemen baru baru muncul di tengah video.
 
 **Sambungan:**
 
@@ -188,17 +168,16 @@ Di prompter dan V2V Edit + LLM ada pilihan **`prompt_style`**:
 
 ## Lighting berubah setelah edit? (Match Color to Source)
 
-Tanpa mask, H3 menggambar ulang seluruh frame, jadi exposure, white balance, atau pencahayaan bisa sedikit bergeser. Ada dua perbaikan:
+H3 menggambar ulang seluruh frame, jadi exposure, white balance, atau pencahayaan bisa sedikit bergeser. Ada dua perbaikan:
 
 1. **Prompt**: untuk video editing, LLM tidak lagi mendeskripsikan ulang lighting (kata seperti "warm key light" atau "cinematic" membuat H3 menata ulang cahaya). Cukup ditulis "same lighting, exposure and color grade as `<Video 1>`".
 2. **Node MiniMax H3 Match Color to Source** (setelah VAE Decode):
    ```
    VAEDecode ─> images
    V2V Edit + LLM.source_frames ─> source_frames
-   V2V Edit + LLM.mask ─> mask (opsional)
    → CreateVideo
    ```
-   Warna dan kecerahan tiap frame dicocokkan lagi ke video asli (Lab, dihaluskan antar-frame supaya tidak flicker). Statistiknya hanya diukur di luar mask, jadi elemen yang diedit (misalnya dress merah) tetap merah.
+   Warna dan kecerahan tiap frame dicocokkan lagi ke video asli (Lab, dihaluskan antar-frame supaya tidak flicker). Kalau warna elemen yang diedit (misalnya dress merah) ikut tertarik ke warna lama, turunkan `strength`.
 
 ## Contoh pemakaian
 

@@ -279,155 +279,6 @@ def tensor_sig(t) -> tuple:
         return (id(t),)
 
 
-# ----------------------------------------------------------------------------- text-prompted masks (SAM 3.1)
-# preset -> (default SAM3 prompt, invert). Empty prompt = no mask unless the user writes one.
-MASK_DEFAULTS = {
-    "change_outfit": ("clothes", False),
-    "replace_person": ("person", False),
-    "change_background": ("person", True),
-}
-
-
-def sam3_video_mask(frames, sam3_model, sam3_clip, prompt: str, threshold: float = 0.5, max_objects: int = 4):
-    """Text-prompted mask for every frame with ComfyUI core SAM 3 video tracking. Returns [N,H,W] float 0/1."""
-    from comfy_extras import nodes_sam3  # type: ignore
-
-    def _a(o):
-        return o.args if hasattr(o, "args") else o
-
-    tokens = sam3_clip.tokenize(prompt)
-    cond = sam3_clip.encode_from_tokens_scheduled(tokens)
-    track = _a(nodes_sam3.SAM3_VideoTrack.execute(
-        images=frames, model=sam3_model, conditioning=cond, detection_threshold=threshold,
-        max_objects=max_objects, detect_interval=1))[0]
-    masks = _a(nodes_sam3.SAM3_TrackToMask.execute(track_data=track, object_indices=""))[0]
-    n_obj = 0
-    try:
-        packed = track.get("packed_masks") if isinstance(track, dict) else None
-        n_obj = int(packed.shape[1]) if packed is not None else 0
-    except Exception:  # noqa: BLE001
-        pass
-    sam3_video_mask.last_object_count = n_obj
-    return (masks > 0.5).float()
-
-
-def refine_mask(mask, grow_px: int = 12, temporal: int = 1, invert: bool = False):
-    """Binary [N,H,W] mask: optional invert, spatial dilation by grow_px, temporal max over +-temporal frames
-    (hides single-frame dropouts of the tracker)."""
-    import torch
-    import torch.nn.functional as F
-
-    m = (mask > 0.5).float()
-    if invert:
-        m = 1.0 - m
-    if grow_px > 0:
-        k = 2 * int(grow_px) + 1
-        m = F.max_pool2d(m.unsqueeze(1), kernel_size=k, stride=1, padding=int(grow_px))[:, 0]
-    if temporal > 0 and m.shape[0] > 1:
-        out = m.clone()
-        for d in range(1, int(temporal) + 1):
-            out[d:] = torch.maximum(out[d:], m[:-d])
-            out[:-d] = torch.maximum(out[:-d], m[d:])
-        m = out
-    return m.clamp(0, 1)
-
-
-def fill_mask_gaps(mask, min_ratio: float = 0.35):
-    """Frames where the tracker lost the object (empty or much smaller mask than usual - typical in the first
-    frames, before SAM3 locks on) get the mask of the nearest good frame. Returns (mask, list_of_filled_idx).
-    Without this, the old garment stays visible in those frames of the <Video 1> reference and H3 copies it,
-    so the new garment only 'appears' later in the video."""
-    import torch
-
-    m = (mask > 0.5).float()
-    n = m.shape[0]
-    area = m.flatten(1).sum(1)
-    nz = area[area > 0]
-    if n < 2 or nz.numel() == 0:
-        return m, []
-    ref = float(nz.median())
-    good = (area >= min_ratio * ref).nonzero().flatten().tolist()
-    if not good or len(good) == n:
-        return m, []
-    good_t = torch.tensor(good)
-    out = m.clone()
-    filled = []
-    for i in range(n):
-        if i in good:
-            continue
-        before = good_t[good_t < i]
-        after = good_t[good_t > i]
-        cands = []
-        if before.numel():
-            cands.append(int(before[-1]))
-        if after.numel():
-            cands.append(int(after[0]))
-        # union of the nearest good frame on each side (covers the garment wherever it may be in between)
-        out[i] = torch.maximum(out[i], torch.stack([m[c] for c in cands]).amax(0))
-        filled.append(i)
-    return out, filled
-
-
-def describe_ranges(idx: list[int]) -> str:
-    """[0,1,2,5,6] -> '0-2, 5-6'"""
-    if not idx:
-        return ""
-    out, start, prev = [], idx[0], idx[0]
-    for i in idx[1:]:
-        if i == prev + 1:
-            prev = i
-            continue
-        out.append(f"{start}-{prev}" if prev > start else f"{start}")
-        start = prev = i
-    out.append(f"{start}-{prev}" if prev > start else f"{start}")
-    return ", ".join(out)
-
-
-def fit_mask(mask, frame_count: int, width: int, height: int):
-    """Any [N,H,W] mask -> [frame_count,height,width] (nearest in time, center-crop resize)."""
-    import torch
-    import torch.nn.functional as F
-
-    if mask.dim() == 2:
-        mask = mask.unsqueeze(0)
-    n = mask.shape[0]
-    if n != frame_count:
-        idx = torch.linspace(0, n - 1, frame_count).round().long() if n > 1 else torch.zeros(frame_count).long()
-        mask = mask[idx]
-    if mask.shape[1] != height or mask.shape[2] != width:
-        src_ratio, dst_ratio = mask.shape[2] / mask.shape[1], width / height
-        if abs(src_ratio - dst_ratio) > 1e-3:  # center crop like resize_frames
-            if src_ratio > dst_ratio:
-                new_w = int(round(mask.shape[1] * dst_ratio))
-                x0 = (mask.shape[2] - new_w) // 2
-                mask = mask[:, :, x0:x0 + new_w]
-            else:
-                new_h = int(round(mask.shape[2] / dst_ratio))
-                y0 = (mask.shape[1] - new_h) // 2
-                mask = mask[:, y0:y0 + new_h, :]
-        mask = F.interpolate(mask.unsqueeze(1).float(), size=(height, width), mode="nearest")[:, 0]
-    return (mask > 0.5).float()
-
-
-def mask_rule(prompt: str, invert: bool) -> str:
-    items = [p.split(":")[0].strip() for p in prompt.split(",") if p.strip()]
-    names = " and ".join(f"'{i}'" for i in items) if items else f"'{prompt}'"
-    if invert:
-        what = f"everything except the {'regions' if len(items) > 1 else 'region'} showing {names} is regenerated"
-    elif len(items) > 1:
-        what = f"only the regions showing {names} are regenerated (each one edited as the request says)"
-    else:
-        what = f"only the region showing {names} is regenerated"
-    what += (" - the mask covers EVERY matching element in the frame (e.g. the clothes of all people), so apply the "
-             "change to all of them unless the request names only one")
-    return (
-        f"MASKED EDIT: {what}; every other pixel is copied from <Video 1> unchanged. Put the detail into the new "
-        "content of the masked area (look, material, how it follows the body, contact shadows and edges where it "
-        "meets the kept area); describe the kept area only briefly for context."
-    )
-
-
-# ----------------------------------------------------------------------------- color / lighting match
 def _srgb_to_lab(x):
     """x: [...,3] in 0..1 -> Lab (D65)."""
     import torch
@@ -468,10 +319,9 @@ def _lab_to_srgb(lab):
     return torch.where(lin <= 0.0031308, lin * 12.92, 1.055 * lin.clamp(min=1e-8) ** (1 / 2.4) - 0.055).clamp(0, 1)
 
 
-def match_color(images, reference, mask=None, strength: float = 1.0, smooth_frames: int = 4, chunk: int = 16):
+def match_color(images, reference, strength: float = 1.0, smooth_frames: int = 4, chunk: int = 16):
     """Per-frame Lab mean/std transfer so `images` get the lighting/exposure/white balance of `reference`.
-    Statistics are measured only OUTSIDE `mask` (1 = edited area), then applied to the whole frame, so the kept
-    area matches the source and the edited element gets the same correction. Stats are smoothed over time."""
+    Stats are smoothed over time."""
     import torch
     import torch.nn.functional as F
 
@@ -483,9 +333,6 @@ def match_color(images, reference, mask=None, strength: float = 1.0, smooth_fram
     if ref.shape[1] != h or ref.shape[2] != w:
         ref = F.interpolate(ref.movedim(-1, 1).float(), size=(h, w), mode="bilinear", align_corners=False).movedim(1, -1)
     keep = None
-    if mask is not None:
-        mk = fit_mask(mask.float(), n, w, h)
-        keep = (1.0 - mk).to(images.device)
 
     def stats(x_lab, k):
         if k is None:
