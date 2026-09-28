@@ -243,6 +243,12 @@ def build_user_text(
             "not mentioned in the request; describe the complete resulting video shot by shot, including the edit."
         )
         lines.append(
+            "- EDIT FROM THE FIRST FRAME: the edit is already complete in frame 0 and stays identical until the last "
+            "frame - it is NOT an on-screen change or transformation. Write e.g. '<Subject 1> wears the ... throughout "
+            "the whole video'. Never write 'now wears', 'is replaced', 'changes into', 'instead of', 'transforms', "
+            "and do not describe or name the old element anywhere (summary included)."
+        )
+        lines.append(
             "- MOTION IN VIDEO EDIT: do NOT describe the motion, actions, gestures or expressions at all - H3 takes "
             "them from <Video 1> (and the pose control). Write exactly one sentence for it, e.g. '<Subject 1> performs "
             "exactly the same motion, gestures, expressions, lip movements and timing as in <Video 1>.' No timestamps "
@@ -410,7 +416,9 @@ def build_simple_text(*, instruction: str, task: str, pictures: list[str], video
         lines += ["", f"{first_frame_label} is the edited first frame: describe the new element exactly as it looks "
                       f"there and name {first_frame_label}."]
     if task == "video editing":
-        lines += ["", "This is an edit of <Video 1>: describe only the new/changed element in 1-2 sentences."]
+        lines += ["", "This is an edit of <Video 1>: describe only the new/changed element in 1-2 sentences, as "
+                      "something present for the whole video (e.g. 'she wears ... throughout'), never as a change "
+                      "happening on screen; do not name the old element."]
     if extra_rules.strip():
         # keep only the short intent of preset/mask rules
         lines += ["", "CONTEXT (do not repeat it)", extra_rules.strip()]

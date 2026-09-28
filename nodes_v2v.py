@@ -394,6 +394,10 @@ class MiniMaxH3V2VEditLLM:
         """Returns (mask [N,H,W] or None, mask_info for the LLM: (prompt, invert) / ("", False) / None)."""
         if mask is not None:
             m = v2v.fit_mask(mask.float(), tl.frame_count, width, height)
+            m, filled = v2v.fill_mask_gaps(m)
+            if filled:
+                lc.log(f"V2V: external mask empty/small in {len(filled)} frame(s) ({v2v.describe_ranges(filled)}) "
+                       "-> filled from the nearest good frame.")
             m = v2v.refine_mask(m, grow_px=mask_grow, temporal=0, invert=mask_invert)
             lc.log(f"V2V: external mask, {float(m.mean()) * 100:.1f}% of the frame regenerated")
             return m, ("", False)
@@ -419,6 +423,10 @@ class MiniMaxH3V2VEditLLM:
             if float(raw.sum()) == 0:
                 raise ValueError(f"SAM3 found no '{prompt}' in the video. Try another mask_prompt (English, e.g. "
                                  "'shirt' instead of 'clothes') or lower mask_threshold.")
+            raw, filled = v2v.fill_mask_gaps(raw)
+            if filled:
+                lc.log(f"V2V: SAM3 lost '{prompt}' in {len(filled)} frame(s) ({v2v.describe_ranges(filled)}) -> "
+                       "filled from the nearest tracked frame (otherwise the old element shows there).")
             m = v2v.refine_mask(raw, grow_px=mask_grow, temporal=1, invert=invert).cpu()
             if len(self._mask_cache) > 8:
                 self._mask_cache.clear()

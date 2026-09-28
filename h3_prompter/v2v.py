@@ -332,6 +332,57 @@ def refine_mask(mask, grow_px: int = 12, temporal: int = 1, invert: bool = False
     return m.clamp(0, 1)
 
 
+def fill_mask_gaps(mask, min_ratio: float = 0.35):
+    """Frames where the tracker lost the object (empty or much smaller mask than usual - typical in the first
+    frames, before SAM3 locks on) get the mask of the nearest good frame. Returns (mask, list_of_filled_idx).
+    Without this, the old garment stays visible in those frames of the <Video 1> reference and H3 copies it,
+    so the new garment only 'appears' later in the video."""
+    import torch
+
+    m = (mask > 0.5).float()
+    n = m.shape[0]
+    area = m.flatten(1).sum(1)
+    nz = area[area > 0]
+    if n < 2 or nz.numel() == 0:
+        return m, []
+    ref = float(nz.median())
+    good = (area >= min_ratio * ref).nonzero().flatten().tolist()
+    if not good or len(good) == n:
+        return m, []
+    good_t = torch.tensor(good)
+    out = m.clone()
+    filled = []
+    for i in range(n):
+        if i in good:
+            continue
+        before = good_t[good_t < i]
+        after = good_t[good_t > i]
+        cands = []
+        if before.numel():
+            cands.append(int(before[-1]))
+        if after.numel():
+            cands.append(int(after[0]))
+        # union of the nearest good frame on each side (covers the garment wherever it may be in between)
+        out[i] = torch.maximum(out[i], torch.stack([m[c] for c in cands]).amax(0))
+        filled.append(i)
+    return out, filled
+
+
+def describe_ranges(idx: list[int]) -> str:
+    """[0,1,2,5,6] -> '0-2, 5-6'"""
+    if not idx:
+        return ""
+    out, start, prev = [], idx[0], idx[0]
+    for i in idx[1:]:
+        if i == prev + 1:
+            prev = i
+            continue
+        out.append(f"{start}-{prev}" if prev > start else f"{start}")
+        start = prev = i
+    out.append(f"{start}-{prev}" if prev > start else f"{start}")
+    return ", ".join(out)
+
+
 def fit_mask(mask, frame_count: int, width: int, height: int):
     """Any [N,H,W] mask -> [frame_count,height,width] (nearest in time, center-crop resize)."""
     import torch
