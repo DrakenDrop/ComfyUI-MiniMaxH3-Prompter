@@ -293,10 +293,23 @@ class MiniMaxH3R2VPrompter:
                  model=local_models.SERVER_DEFAULT, mmproj=local_models.MMPROJ_AUTO, **kw):
         print_tokens = kw.get("print_to_console", True)
         model_path, mmproj_path = local_models.resolve(model, mmproj, _CFG)
+        has_media = any(kw.get(k) is not None for k in kw
+                        if (k.startswith("image_") or k.startswith("video_")) and k[6:].isdigit()) \
+            or kw.get("first_frame") is not None
         if model_path:
             if mmproj_path is None and mmproj != local_models.MMPROJ_NONE:
-                lc.log(f"no matching mmproj found for {model}: running text-only (images/videos can't be seen). "
-                       "Pick the mmproj manually if the model has vision.")
+                found = list(local_models.mmproj_choices(_CFG))[2:]
+                if has_media:
+                    raise RuntimeError(
+                        f"[H3 Prompter] mmproj 'auto' tidak menemukan file vision untuk {model}, jadi LLM tidak bisa "
+                        "MELIHAT gambar/video yang tersambung (prompt-nya akan dikarang). Pilih mmproj secara manual. "
+                        + ("File mmproj yang ada: " + ", ".join(found) if found else
+                           "Tidak ada file mmproj*.gguf di models/LLM - download mmproj model ini (mis. mmproj-F16.gguf "
+                           "dari repo Unsloth yang sama) ke folder modelnya.")
+                        + " Kalau memang ingin tanpa vision, pilih 'none (text only)'.")
+                lc.log(f"no matching mmproj found for {model}: running text-only.")
+            elif mmproj_path and mmproj == local_models.MMPROJ_AUTO:
+                lc.log(f"mmproj auto -> {os.path.basename(mmproj_path)}")
             server_url = managed_server.ensure(model_path, mmproj_path, kw.get("context_size", 32768), _CFG)
             model_alias = os.path.splitext(os.path.basename(model_path))[0]
             vision_ok = mmproj_path is not None

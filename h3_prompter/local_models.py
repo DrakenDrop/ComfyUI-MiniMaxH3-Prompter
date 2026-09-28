@@ -80,41 +80,62 @@ def _norm(s: str) -> str:
     return re.sub(r"[^a-z0-9]", "", s)
 
 
-def auto_mmproj(model_path: str, cfg: dict | None = None) -> str | None:
-    """Pick the mmproj that belongs to this model, from the model's own folder.
+def _prec(n: str) -> int:
+    n = n.lower()
+    return 2 if ("f16" in n and "bf16" not in n) else (1 if "bf16" in n else 0)
 
-    * an mmproj whose name matches the model name wins (e.g. mmproj-Qwen3.8-27B-ABLITERATED-F16 for
-      Qwen3.8-27B-ABLITERATED-Q4_K_M), F16 preferred over BF16 over others;
-    * generic names (mmproj-F16.gguf, as in Unsloth repos) are used only when the folder holds a single model;
-    * otherwise None -> choose the mmproj manually (a wrong mmproj makes llama-server crash).
+
+def _name_score(mm_file: str, stem: str) -> int:
+    """>0 when the mmproj name belongs to the model (common prefix length), else 0."""
+    core = _norm(os.path.basename(mm_file).lower().replace("mmproj", ""))
+    if not core or len(core) < 4:
+        return 0
+    common = len(os.path.commonprefix([core, stem]))
+    if stem.startswith(core) or core.startswith(stem) or common >= max(6, int(0.8 * len(core))):
+        return common
+    return 0
+
+
+def _family(stem: str) -> str:
+    """'qwen3827babliterated' -> 'qwen3827b' (name up to and including the size, e.g. 27b / 8b / 0.6b)."""
+    m = re.match(r"^(.*?\d+b)", stem)
+    return m.group(1) if m else stem
+
+
+def auto_mmproj(model_path: str, cfg: dict | None = None) -> str | None:
+    """Pick the mmproj that belongs to this model.
+
+    1. an mmproj whose name matches the model (e.g. mmproj-Qwen3.8-27B-F16 for Qwen3.8-27B-ABLITERATED-Q4_K_M),
+       first in the model's folder, then anywhere in models/LLM; F16 preferred over BF16 over others;
+    2. the only mmproj in the model's folder (generic names like mmproj-F16.gguf, as in Unsloth repos), unless
+       that folder holds models of different families;
+    3. the only mmproj in all of models/LLM;
+    otherwise None.
     """
     folder = os.path.dirname(model_path)
     stem = _norm(_SPLIT_PART.sub(".gguf", os.path.basename(model_path)))
     try:
         files = [f for f in os.listdir(folder) if f.lower().endswith(".gguf")]
     except OSError:
-        return None
-    mm = [f for f in files if _is_mmproj(f)]
-    if not mm:
-        return None
-    n_models = sum(1 for f in files if not _is_mmproj(f)
-                   and not (_SPLIT_PART.search(f) and _SPLIT_PART.search(f).group(1) != "00001"))
+        files = []
+    local_mm = [os.path.join(folder, f) for f in files if _is_mmproj(f)]
+    _, all_mm_map = _scan(cfg)
+    all_mm = list(all_mm_map.values())
 
-    def prec(n: str) -> int:
-        n = n.lower()
-        return 2 if ("f16" in n and "bf16" not in n) else (1 if "bf16" in n else 0)
+    for pool in (local_mm, all_mm):
+        scored = [(_name_score(f, stem), _prec(f), f) for f in pool]
+        scored = [x for x in scored if x[0] > 0]
+        if scored:
+            return sorted(scored, reverse=True)[0][2]
 
-    matched = []
-    for f in mm:
-        core = _norm(f.lower().replace("mmproj", ""))
-        if core and len(core) >= 4 and (stem.startswith(core) or core.startswith(stem)
-                                        or len(os.path.commonprefix([core, stem])) >= max(6, int(0.8 * len(core)))):
-            matched.append((len(os.path.commonprefix([core, stem])), prec(f), f))
-    if matched:
-        return os.path.join(folder, sorted(matched, reverse=True)[0][2])
-    generic = [f for f in mm if _norm(f.lower().replace("mmproj", "")) in ("", "model")]
-    if generic and n_models == 1:
-        return os.path.join(folder, sorted(generic, key=prec, reverse=True)[0])
+    if local_mm:
+        models = [f for f in files if not _is_mmproj(f)
+                  and not (_SPLIT_PART.search(f) and _SPLIT_PART.search(f).group(1) != "00001")]
+        families = {_family(_norm(_SPLIT_PART.sub(".gguf", f))) for f in models}
+        if len(families) <= 1:
+            return sorted(local_mm, key=_prec, reverse=True)[0]
+    if len(all_mm) == 1:
+        return all_mm[0]
     return None
 
 
