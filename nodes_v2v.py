@@ -164,6 +164,11 @@ class MiniMaxH3V2VEditLLM:
                 "tooltip": "Off = ignore every mask source (mask input, SAM3, preset default): the whole frame is "
                            "regenerated, motion still follows pose/depth/edge. Handy to A/B without rewiring.",
             }),
+            "hide_masked_in_reference": ("BOOLEAN", {
+                "default": True,
+                "tooltip": "With a mask: grey out the masked area in the <Video 1> reference, so H3 cannot copy the OLD "
+                           "content (e.g. the old dress) back into the edit. Everything outside the mask stays visible.",
+            }),
         })
         return {"required": required, "optional": optional}
 
@@ -211,7 +216,7 @@ class MiniMaxH3V2VEditLLM:
     def run(self, model, clip, vae, source_video, source_fps, edit_mode, instruction, llm_model, mmproj, thinking,
             length, seed, model_patch=None, control_pose=None, control_depth=None, control_edge=None,
             first_frame=None, sam3_model=None, sam3_clip=None, mask_prompt="", mask_invert=False, mask_grow=12,
-            mask_threshold=0.5, mask_max_objects=8, mask=None, use_mask=True, audio_vae=None, source_audio=None, reuse_audio=False, asset_notes="",
+            mask_threshold=0.5, mask_max_objects=8, mask=None, use_mask=True, hide_masked_in_reference=True, audio_vae=None, source_audio=None, reuse_audio=False, asset_notes="",
             prompt_override="", motion_lock=1.0, pose_strength=-1.0, depth_strength=-1.0, edge_strength=-1.0,
             structure_end_percent=-1.0, use_source_as_reference=True, start_seconds=0.0, max_seconds=15.0,
             resolution="768p (native)", ref_image_size="max", video_sample_fps=2.0, unload_llm_after_prompt=False,
@@ -257,7 +262,14 @@ class MiniMaxH3V2VEditLLM:
             core_refs[f"ref_image_{len(refs)}"] = first
         if len(core_refs) > 9:
             raise ValueError(f"MiniMax H3 accepts at most 9 reference images (got {len(core_refs)})")
-        ref_videos = {"ref_video_0": src} if use_source_as_reference else None
+        ref_src = src
+        if edit_mask is not None and hide_masked_in_reference and use_source_as_reference:
+            # the <Video 1> reference would otherwise show the old content inside the mask, and H3 tends to copy
+            # it straight back; the Fun ControlNet inpaint hint still gets the real source around the mask
+            m = edit_mask.to(src.device, src.dtype).unsqueeze(-1)
+            ref_src = src * (1.0 - m) + 0.5 * m
+            lc.log("V2V: masked area hidden (grey) in the <Video 1> reference.")
+        ref_videos = {"ref_video_0": ref_src} if use_source_as_reference else None
         ref_video_audios = {"ref_video_audio_0": audio} if audio is not None else None
 
         positive, latent = _args(h3.MiniMaxH3ReferenceToVideo.execute(

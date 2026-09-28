@@ -119,6 +119,7 @@ Dengan mask, **hanya area yang di-mask yang dibuat ulang**. Piksel lain, termasu
 | `change_background` | `person` **dibalik** (semua kecuali orang dibuat ulang) |
 | preset lain | tanpa mask, kecuali `mask_prompt` diisi |
 
+- **`hide_masked_in_reference`** (default on): area mask di referensi `<Video 1>` dibuat abu-abu, supaya H3 tidak menyalin isi lama (misalnya dress hitam) kembali ke area yang diedit.
 - **`use_mask`** (on/off): matikan untuk mengabaikan semua mask (input `mask`, SAM3, dan default preset) tanpa melepas kabel. Seluruh frame dibuat ulang, dan gerakan tetap mengikuti pose/depth/edge.
 - **Beberapa area sekaligus**: pisahkan dengan koma, misalnya `hat, shoes`. Semua area digabung jadi satu mask, dan tiap area diedit sesuai instruction ("topinya jadi merah, sepatunya jadi sneakers putih"). Batas jumlah objek yang dilacak diatur lewat `mask_max_objects` (default 8; sepasang sepatu = 2 objek).
 - `mask_invert`: membuat ulang semua **kecuali** objek yang di-prompt.
