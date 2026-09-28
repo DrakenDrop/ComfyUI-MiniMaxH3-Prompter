@@ -17,6 +17,7 @@ CANVAS_MULTIPLE = 32
 MIN_FRAMES = 5
 MAX_FRAMES = 362  # 17*21+5, ~15.1 s, top of the trained range
 TRAINED_MIN_FRAMES = 124
+MAX_PAD_FRAMES = 8  # ~0.33 s of held last frame, only when that is the nearer grid length
 
 RESOLUTIONS = {
     "768p (native)": 768,
@@ -85,7 +86,16 @@ class Timeline:
                              f"video ({src_duration:.2f}s)")
         want = min(avail, max(0.2, float(max_seconds)))
         n = min(int(math.floor(want * H3_FPS + 1e-6)), MAX_FRAMES)
-        self.frame_count = align_down(n)
+        down = align_down(n)
+        up = min(down + 17, MAX_FRAMES) if n > down else down
+        # Snap to the NEAREST 17k+5 length (5 s = 120 frames -> 124, not 107). When that is longer than the
+        # source, the last source frame is held for the few missing frames (at most MAX_PAD_FRAMES).
+        self.padded_frames = 0
+        if up > n and up - n <= MAX_PAD_FRAMES and (up - n) <= (n - down):
+            self.frame_count = up
+            self.padded_frames = max(0, up - int(math.floor(avail * H3_FPS + 1e-6)))
+        else:
+            self.frame_count = down
         if self.frame_count < MIN_FRAMES:
             raise ValueError("source clip is too short for MiniMax H3 (needs at least 5 frames at 24 fps)")
         if self.frame_count < TRAINED_MIN_FRAMES:
@@ -128,6 +138,11 @@ class Timeline:
         wf = wf[..., a:b]
         if wf.shape[-1] < 1:
             return None
+        want = b - a
+        if wf.shape[-1] < want:  # held frames at the end -> matching silence
+            import torch
+            pad = torch.zeros(*wf.shape[:-1], want - wf.shape[-1], dtype=wf.dtype, device=wf.device)
+            wf = torch.cat([wf, pad], dim=-1)
         return {"waveform": wf.contiguous(), "sample_rate": sr}
 
 

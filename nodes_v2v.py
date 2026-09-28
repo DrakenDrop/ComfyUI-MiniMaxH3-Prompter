@@ -239,7 +239,8 @@ class MiniMaxH3V2VEditLLM:
         src = tl.take(source_video, "source_video")
         width, height = v2v.canvas_for(src.shape[2], src.shape[1], v2v.RESOLUTIONS[resolution])
         src = v2v.resize_frames(src, width, height)
-        lc.log(f"V2V: {tl.frame_count} frames ({tl.duration:.2f}s @24fps) at {width}x{height}, mode={edit_mode}")
+        lc.log(f"V2V: {tl.frame_count} frames ({tl.duration:.2f}s @24fps) at {width}x{height}, mode={edit_mode}"
+               + (f" (last source frame held for {tl.padded_frames} frames)" if tl.padded_frames else ""))
 
         refs = [refs_kw[f"ref_image_{i}"][:1] for i in range(1, MAX_REFS + 1)
                 if refs_kw.get(f"ref_image_{i}") is not None]
