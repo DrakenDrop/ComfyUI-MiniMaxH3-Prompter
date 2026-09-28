@@ -152,7 +152,7 @@ class MiniMaxH3V2VEditLLM:
             }),
             "mask_invert": ("BOOLEAN", {"default": False,
                                         "tooltip": "Regenerate everything EXCEPT the prompted object."}),
-            "mask_grow": ("INT", {"default": 12, "min": 0, "max": 128,
+            "mask_grow": ("INT", {"default": 6, "min": 0, "max": 128,
                                   "tooltip": "Grow the mask by N pixels (room for longer sleeves, hair, shadows)."}),
             "mask_threshold": ("FLOAT", {"default": 0.5, "min": 0.05, "max": 0.95, "step": 0.01}),
             "mask_max_objects": ("INT", {"default": 8, "min": 1, "max": 64,
@@ -168,6 +168,16 @@ class MiniMaxH3V2VEditLLM:
                 "default": True,
                 "tooltip": "With a mask: grey out the masked area in the <Video 1> reference, so H3 cannot copy the OLD "
                            "content (e.g. the old dress) back into the edit. Everything outside the mask stays visible.",
+            }),
+            "mask_strength": ("FLOAT", {
+                "default": 1.0, "min": 0.0, "max": 3.0, "step": 0.05,
+                "tooltip": "Strength of the Fun ControlNet inpaint patch (own patch, independent of pose). Too low -> "
+                           "the black hole fill of the mask shows through (black dress / dark outline). 1.0-1.3.",
+            }),
+            "mask_patch": (["separate", "combined with first control"], {
+                "default": "separate",
+                "tooltip": "separate = inpaint patch on its own at mask_strength; combined = mask rides on the first "
+                           "control (pose) patch with that control's strength (old behaviour).",
             }),
         })
         return {"required": required, "optional": optional}
@@ -216,7 +226,8 @@ class MiniMaxH3V2VEditLLM:
     def run(self, model, clip, vae, source_video, source_fps, edit_mode, instruction, llm_model, mmproj, thinking,
             length, seed, model_patch=None, control_pose=None, control_depth=None, control_edge=None,
             first_frame=None, sam3_model=None, sam3_clip=None, mask_prompt="", mask_invert=False, mask_grow=12,
-            mask_threshold=0.5, mask_max_objects=8, mask=None, use_mask=True, hide_masked_in_reference=True, audio_vae=None, source_audio=None, reuse_audio=False, asset_notes="",
+            mask_threshold=0.5, mask_max_objects=8, mask=None, use_mask=True, hide_masked_in_reference=True, mask_strength=1.0,
+            mask_patch="separate", audio_vae=None, source_audio=None, reuse_audio=False, asset_notes="",
             prompt_override="", motion_lock=1.0, pose_strength=-1.0, depth_strength=-1.0, edge_strength=-1.0,
             structure_end_percent=-1.0, use_source_as_reference=True, start_seconds=0.0, max_seconds=15.0,
             resolution="768p (native)", ref_image_size="max", video_sample_fps=2.0, unload_llm_after_prompt=False,
@@ -294,7 +305,8 @@ class MiniMaxH3V2VEditLLM:
         out_model = model
         plan = v2v.resolve_strengths(edit_mode, motion_lock, connected, pose_strength, depth_strength,
                                      edge_strength, structure_end_percent)
-        mask_pending = edit_mask
+        combined = mask_patch.startswith("combined")
+        mask_pending = edit_mask if combined else None
         for name, (strength, end) in plan.items():
             if strength <= 0:
                 continue
@@ -307,10 +319,13 @@ class MiniMaxH3V2VEditLLM:
             out_model = _args(h3.MiniMaxH3FunControlNetApply.execute(
                 model=out_model, model_patch=model_patch, vae=vae, strength=strength,
                 start_percent=0.0, end_percent=end, control_video=cv, **extra))[0]
-        if mask_pending is not None:  # mask without any control video
-            lc.log("V2V: mask-only inpainting (no control video) strength=1.00")
+        if not combined and edit_mask is not None:
+            mask_pending = edit_mask
+        if mask_pending is not None and mask_strength > 0:  # separate inpaint patch (or no control connected)
+            ms = float(mask_strength) if (not combined or not any(connected.values())) else 1.0
+            lc.log(f"V2V: mask inpainting patch strength={ms:.2f}")
             out_model = _args(h3.MiniMaxH3FunControlNetApply.execute(
-                model=out_model, model_patch=model_patch, vae=vae, strength=1.0, start_percent=0.0,
+                model=out_model, model_patch=model_patch, vae=vae, strength=ms, start_percent=0.0,
                 end_percent=1.0, control_video=None, mask=mask_pending, source_video=src))[0]
         if not any(connected.values()):
             log.warning("MiniMax H3 V2V: no control video connected - motion only follows <Video 1> loosely. "
