@@ -319,55 +319,59 @@ def _lab_to_srgb(lab):
     return torch.where(lin <= 0.0031308, lin * 12.92, 1.055 * lin.clamp(min=1e-8) ** (1 / 2.4) - 0.055).clamp(0, 1)
 
 
-def match_color(images, reference, strength: float = 1.0, smooth_frames: int = 4, chunk: int = 16):
-    """Per-frame Lab mean/std transfer so `images` get the lighting/exposure/white balance of `reference`.
-    Stats are smoothed over time."""
+def _ref_chunk(reference, n: int, h: int, w: int, i: int, j: int, device):
+    """Frames i..j of `reference`, time-mapped to n frames and resized to h x w, on `device`."""
     import torch
     import torch.nn.functional as F
 
+    m = reference.shape[0]
+    idx = torch.arange(i, j)
+    if m != n:
+        idx = (idx.float() * (m - 1) / max(n - 1, 1)).round().long() if m > 1 else torch.zeros(j - i).long()
+    r = reference[idx, ..., :3].to(device, non_blocking=True).float()
+    if r.shape[1] != h or r.shape[2] != w:
+        r = F.interpolate(r.movedim(-1, 1), size=(h, w), mode="bilinear", align_corners=False).movedim(1, -1)
+    return r
+
+
+def _smooth_stats(v, radius: int, weight=None):
+    """Moving average over time of [N,C] stats (optionally weighted)."""
+    import torch.nn.functional as F
+
+    k = 2 * radius + 1
+    if weight is None:
+        pad = F.pad(v.T.unsqueeze(0), (radius, radius), mode="replicate")
+        return F.avg_pool1d(pad, kernel_size=k, stride=1)[0].T
+    num = F.avg_pool1d(F.pad((v * weight[:, None]).T.unsqueeze(0), (radius, radius), mode="replicate"), k, 1)[0].T
+    den = F.avg_pool1d(F.pad(weight[None, None], (radius, radius), mode="replicate"), k, 1)[0, 0]
+    return num / den.clamp(min=1e-6)[:, None]
+
+
+def match_color(images, reference, strength: float = 1.0, smooth_frames: int = 4, chunk: int = 16, device=None):
+    """Per-frame Lab mean/std transfer so `images` get the lighting/exposure/white balance of `reference`.
+    Runs chunk by chunk on `device` (GPU); the result goes back to the device of `images`."""
+    import torch
+
+    dev = device or images.device
     n, h, w, _ = images.shape
-    ref = reference[..., :3]
-    if ref.shape[0] != n:
-        idx = torch.linspace(0, ref.shape[0] - 1, n).round().long() if ref.shape[0] > 1 else torch.zeros(n).long()
-        ref = ref[idx]
-    if ref.shape[1] != h or ref.shape[2] != w:
-        ref = F.interpolate(ref.movedim(-1, 1).float(), size=(h, w), mode="bilinear", align_corners=False).movedim(1, -1)
-    keep = None
-
-    def stats(x_lab, k):
-        if k is None:
-            mu = x_lab.mean(dim=(1, 2))
-            sd = x_lab.std(dim=(1, 2))
-        else:
-            wgt = k.unsqueeze(-1)
-            tot = wgt.sum(dim=(1, 2)).clamp(min=1.0)
-            mu = (x_lab * wgt).sum(dim=(1, 2)) / tot
-            sd = (((x_lab - mu[:, None, None]) ** 2 * wgt).sum(dim=(1, 2)) / tot).sqrt()
-        return mu, sd.clamp(min=1e-3)
-
     mus_x, sds_x, mus_r, sds_r = [], [], [], []
     for i in range(0, n, chunk):
-        k = keep[i:i + chunk] if keep is not None else None
-        mx, sx = stats(_srgb_to_lab(images[i:i + chunk, ..., :3].float()), k)
-        mr, sr = stats(_srgb_to_lab(ref[i:i + chunk].to(images.device).float()), k)
-        mus_x.append(mx); sds_x.append(sx); mus_r.append(mr); sds_r.append(sr)
-    mu_x, sd_x = torch.cat(mus_x), torch.cat(sds_x)
-    mu_r, sd_r = torch.cat(mus_r), torch.cat(sds_r)
-
+        j = min(n, i + chunk)
+        x = _srgb_to_lab(images[i:j, ..., :3].to(dev, non_blocking=True).float())
+        r = _srgb_to_lab(_ref_chunk(reference, n, h, w, i, j, dev))
+        mus_x.append(x.mean(dim=(1, 2))); sds_x.append(x.std(dim=(1, 2)).clamp(min=1e-3))
+        mus_r.append(r.mean(dim=(1, 2))); sds_r.append(r.std(dim=(1, 2)).clamp(min=1e-3))
+    mu_x, sd_x, mu_r, sd_r = (torch.cat(v) for v in (mus_x, sds_x, mus_r, sds_r))
     if smooth_frames > 0 and n > 1:  # moving average -> no flicker from per-frame stats
-        def smooth(t):
-            k = 2 * smooth_frames + 1
-            pad = F.pad(t.T.unsqueeze(0), (smooth_frames, smooth_frames), mode="replicate")
-            return F.avg_pool1d(pad, kernel_size=k, stride=1)[0].T
-        mu_x, sd_x, mu_r, sd_r = smooth(mu_x), smooth(sd_x), smooth(mu_r), smooth(sd_r)
+        mu_x, sd_x, mu_r, sd_r = (_smooth_stats(v, smooth_frames) for v in (mu_x, sd_x, mu_r, sd_r))
 
     out = []
     for i in range(0, n, chunk):
-        lab = _srgb_to_lab(images[i:i + chunk, ..., :3].float())
-        sl = slice(i, i + lab.shape[0])
-        new = (lab - mu_x[sl, None, None]) / sd_x[sl, None, None] * sd_r[sl, None, None] + mu_r[sl, None, None]
+        j = min(n, i + chunk)
+        lab = _srgb_to_lab(images[i:j, ..., :3].to(dev, non_blocking=True).float())
+        new = (lab - mu_x[i:j, None, None]) / sd_x[i:j, None, None] * sd_r[i:j, None, None] + mu_r[i:j, None, None]
         new = lab + (new - lab) * float(strength)
-        out.append(_lab_to_srgb(new).to(images.dtype))
+        out.append(_lab_to_srgb(new).to(images.device, images.dtype))
     return torch.cat(out, dim=0)
 
 
@@ -387,22 +391,18 @@ def skin_prob(x):
 
 
 def match_skin_tone(images, reference, strength: float = 1.0, smooth_frames: int = 6, chunk: int = 16,
-                    feather: int = 7):
+                    feather: int = 7, device=None):
     """Give the skin in `images` (H3 result) the skin tone of `reference` (source frames, same motion).
 
     No mask: skin is found automatically. Statistics use only pixels that are skin in BOTH videos at the same
     place (so a beige dress in the source or a new outfit in the result does not count), then the colour shift is
-    applied to the skin of the result only, feathered, with per-frame stats smoothed over time (no flicker)."""
+    applied to the skin of the result only, feathered, with per-frame stats smoothed over time (no flicker).
+    Runs chunk by chunk on `device` (GPU); the result goes back to the device of `images`."""
     import torch
     import torch.nn.functional as F
 
+    dev = device or images.device
     n, h, w, _ = images.shape
-    ref = reference[..., :3]
-    if ref.shape[0] != n:
-        idx = torch.linspace(0, ref.shape[0] - 1, n).round().long() if ref.shape[0] > 1 else torch.zeros(n).long()
-        ref = ref[idx]
-    if ref.shape[1] != h or ref.shape[2] != w:
-        ref = F.interpolate(ref.movedim(-1, 1).float(), size=(h, w), mode="bilinear", align_corners=False).movedim(1, -1)
 
     def wstats(lab, wgt):
         tot = wgt.sum(dim=(1, 2))
@@ -413,8 +413,9 @@ def match_skin_tone(images, reference, strength: float = 1.0, smooth_frames: int
 
     mo, so, mr, sr, tw = [], [], [], [], []
     for i in range(0, n, chunk):
-        x = images[i:i + chunk, ..., :3].float()
-        rf = ref[i:i + chunk].to(x.device).float()
+        j = min(n, i + chunk)
+        x = images[i:j, ..., :3].to(dev, non_blocking=True).float()
+        rf = _ref_chunk(reference, n, h, w, i, j, dev)
         wgt = skin_prob(x) * skin_prob(rf)
         a, b, t = wstats(_srgb_to_lab(x), wgt)
         c, d, _ = wstats(_srgb_to_lab(rf), wgt)
@@ -426,29 +427,22 @@ def match_skin_tone(images, reference, strength: float = 1.0, smooth_frames: int
     if float(wt.sum()) <= 0:
         return images
     if smooth_frames > 0 and n > 1:
-        k = 2 * smooth_frames + 1
-
-        def smooth(v):
-            num = F.avg_pool1d(F.pad((v * wt[:, None]).T.unsqueeze(0), (smooth_frames, smooth_frames),
-                                     mode="replicate"), k, 1)[0].T
-            den = F.avg_pool1d(F.pad(wt[None, None], (smooth_frames, smooth_frames), mode="replicate"), k, 1)[0, 0]
-            return num / den.clamp(min=1e-6)[:, None]
-        mu_o, sd_o, mu_r, sd_r = smooth(mu_o), smooth(sd_o), smooth(mu_r), smooth(sd_r)
+        mu_o, sd_o, mu_r, sd_r = (_smooth_stats(v, smooth_frames, wt) for v in (mu_o, sd_o, mu_r, sd_r))
         wt = torch.ones_like(wt)
     ratio = (sd_r / sd_o).clamp(0.8, 1.25)  # mild contrast match only
 
     out = []
     for i in range(0, n, chunk):
-        x = images[i:i + chunk, ..., :3].float()
+        j = min(n, i + chunk)
+        x = images[i:j, ..., :3].to(dev, non_blocking=True).float()
         lab = _srgb_to_lab(x)
-        sl = slice(i, i + x.shape[0])
-        new = (lab - mu_o[sl, None, None]) * ratio[sl, None, None] + mu_r[sl, None, None]
+        new = (lab - mu_o[i:j, None, None]) * ratio[i:j, None, None] + mu_r[i:j, None, None]
         alpha = skin_prob(x)
         if feather > 0:
             alpha = F.avg_pool2d(alpha[:, None], 2 * feather + 1, 1, feather, count_include_pad=False)[:, 0]
-        alpha = (alpha * 1.6).clamp(0, 1) * float(strength) * wt[sl, None, None]
+        alpha = (alpha * 1.6).clamp(0, 1) * float(strength) * wt[i:j, None, None]
         res = _lab_to_srgb(lab + (new - lab) * alpha[..., None])
         if images.shape[-1] == 4:
-            res = torch.cat([res, images[i:i + chunk, ..., 3:].float()], dim=-1)
-        out.append(res.to(images.dtype))
+            res = torch.cat([res, images[i:j, ..., 3:].to(dev).float()], dim=-1)
+        out.append(res.to(images.device, images.dtype))
     return torch.cat(out, dim=0)

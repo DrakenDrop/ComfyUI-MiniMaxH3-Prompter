@@ -41,6 +41,16 @@ def _require_h3():
             f"(comfy_extras/nodes_minimax_h3.py). Update ComfyUI. Import error: {_H3_IMPORT_ERROR}")
 
 
+def _gpu():
+    """ComfyUI's compute device (GPU); None outside ComfyUI -> the tensors' own device."""
+    try:
+        import comfy.model_management as mm  # type: ignore
+
+        return mm.get_torch_device()
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _args(node_output):
     return node_output.args if hasattr(node_output, "args") else node_output
 
@@ -323,7 +333,8 @@ class MiniMaxH3MatchColor:
         }
 
     def run(self, images, source_frames, strength, smooth_frames):
-        return (v2v.match_color(images, source_frames, strength=strength, smooth_frames=smooth_frames),)
+        return (v2v.match_color(images, source_frames, strength=strength, smooth_frames=smooth_frames,
+                                device=_gpu()),)
 
 
 class MiniMaxH3MatchSkinTone:
@@ -350,7 +361,8 @@ class MiniMaxH3MatchSkinTone:
         }
 
     def run(self, images, source_frames, strength, smooth_frames):
-        return (v2v.match_skin_tone(images, source_frames, strength=strength, smooth_frames=smooth_frames),)
+        return (v2v.match_skin_tone(images, source_frames, strength=strength, smooth_frames=smooth_frames,
+                                    device=_gpu()),)
 
 
 NODE_CLASS_MAPPINGS = {
