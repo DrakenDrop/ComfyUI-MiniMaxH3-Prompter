@@ -241,7 +241,7 @@ class MiniMaxH3V2VEditLLM:
             max_tokens=max_tokens, seed=seed, model=llm_model, mmproj=mmproj,
             asset_notes=asset_notes, extra_rules=rules, video_sample_fps=video_sample_fps,
             video_max_side=512, image_max_side=768, context_size=context_size, print_to_console=True,
-            prompt_style=prompt_style, **kw)
+            prompt_style=prompt_style, edit_mode=edit_mode, **kw)
         prompt = out[0]
         if len(self._cache) > 16:
             self._cache.clear()

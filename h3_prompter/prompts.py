@@ -271,6 +271,19 @@ def build_user_text(
                 "non_diegetic_music as N/A unless the user explicitly asks for music, and add no new speech or <d> text (lip "
                 "movements follow <Video 1>, so they stay in sync with the original audio)."
             )
+    n_refs = n_pics - (1 if first_frame_label else 0)
+    if n_refs > 0 and task in ("video editing", "video continuation", "reference generation", "auto"):
+        refs = ", ".join(f"<Picture {i}>" for i in range(1, n_refs + 1))
+        lines.append(
+            f"- REFERENCE PICTURES: {refs} {'is a reference image' if n_refs == 1 else 'are reference images'} for this "
+            "request - separate stills, NOT frames of any video. Look at each one closely. Whatever the request takes "
+            "from a picture (garment, person, object, environment, style) must be described from what is VISIBLE in "
+            "that picture - exact colors, material, pattern, cut, length and details - never generically. If the "
+            "request does not say what a picture is for, assume it shows the new element to apply. Define each "
+            "picture's content in subject_definitions, give it a retention line (attribute_transfer for a garment or "
+            "attribute put on another subject, fully_preserved for a person/object inserted as is, weak_reference for "
+            "style only), and refer to it by its label in detailed_description (e.g. 'the dress from <Picture 1>')."
+        )
     if task == "video continuation":
         lines.append(
             "- VIDEO CONTINUATION: the target video starts where <Video 1> ends (same subjects, place, lighting, momentum) "
@@ -369,18 +382,28 @@ Output 1-3 plain English sentences and nothing else: no headings, no section nam
 Rules:
 - Describe ONLY what the request changes or asks for, concretely (e.g. for clothing: garment type, color, material, cut, length, details). Do not describe anything else.
 - Never describe motion, gestures, expressions, camera, lighting, mood or sound, and never use words like cinematic, dramatic, moody, glowing, golden.
-- Use the asset labels exactly as given (<Picture N>, <Video N>, <Audio N>) when the request uses them, e.g. "the dress from <Picture 1>".
+- Use the asset labels exactly as given (<Picture N>, <Video N>, <Audio N>). When a picture supplies the new element, name it by its label AND describe what is visible in it (e.g. "the sleeveless red satin midi dress with a thin black belt from <Picture 1>") - look at the picture, never guess.
 - The user may write in any language; answer in English. Keep any quoted dialogue verbatim inside <d>[Language] ...</d>.
 - Do not invent anything the request does not ask for."""
 
 
 def build_simple_text(*, instruction: str, task: str, pictures: list[str], videos: list[str], audios: list[str],
-                      asset_notes: str = "", extra_rules: str = "") -> str:
+                      asset_notes: str = "", extra_rules: str = "", first_frame_label: str | None = None) -> str:
     lines = ["REQUEST", instruction.strip() or "(no instruction)"]
     if asset_notes.strip():
         lines += ["", "ASSET ROLES", asset_notes.strip()]
     if pictures or videos or audios:
         lines += ["", "ASSETS"] + [f"- {x}" for x in (*pictures, *videos, *audios)]
+    n_refs = len(pictures) - (1 if first_frame_label else 0)
+    if n_refs > 0:
+        refs = ", ".join(f"<Picture {i}>" for i in range(1, n_refs + 1))
+        lines += ["", f"The attached image(s) {refs} are the reference(s) for this request. Look at them and describe "
+                      "the element taken from them concretely from what you SEE (type, exact color, material, pattern, "
+                      "cut, details), naming its label. If the request does not say what a picture is for, it shows "
+                      "the new element to apply."]
+    if first_frame_label:
+        lines += ["", f"{first_frame_label} is the edited first frame: describe the new element exactly as it looks "
+                      f"there and name {first_frame_label}."]
     if task == "video editing":
         lines += ["", "This is an edit of <Video 1>: describe only the new/changed element in 1-2 sentences."]
     if extra_rules.strip():
@@ -400,6 +423,19 @@ def simple_opener(task: str, has_video: bool, has_audio_reuse: bool = False) -> 
 
 SIMPLE_CLOSER = ("Everything else - the person's identity, face, hair, body, motion, timing, camera, framing, "
                  "background and lighting - stays exactly as in <Video 1>.")
+
+_SIMPLE_CLOSERS = {
+    # the new person comes from the pictures -> do not pin identity to <Video 1>
+    "replace_person": "Everything else - the motion, timing, camera, framing, background and lighting - stays exactly "
+                      "as in <Video 1>.",
+    "change_background": "Everything else - the person's identity, face, hair, body, clothing, motion, timing, camera "
+                         "and framing - stays exactly as in <Video 1>.",
+    "restyle": "The content, motion, timing, camera and framing stay exactly as in <Video 1>.",
+}
+
+
+def simple_closer(edit_mode: str = "") -> str:
+    return _SIMPLE_CLOSERS.get(edit_mode or "", SIMPLE_CLOSER)
 
 
 def clean_simple(text: str) -> str:

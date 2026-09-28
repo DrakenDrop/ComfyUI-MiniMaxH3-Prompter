@@ -196,6 +196,7 @@ class MiniMaxH3R2VPrompter:
         pic_desc, vid_desc, aud_desc = [], [], []
         first_image = None
 
+        pic_parts: list[dict] = []  # pictures go AFTER the video frames (see below)
         pic_n = 0
         for slot in range(1, MAX_PICTURES + 1):
             img = kw.get(f"image_{slot}")
@@ -212,9 +213,10 @@ class MiniMaxH3R2VPrompter:
             pic_n += 1
             kw.setdefault("_pic_tensors", {})[pic_n] = img[:1] if hasattr(img, "__getitem__") else img
             w, h = pil.size
-            pic_desc.append(f"<Picture {pic_n}>: still image ({w}x{h}) from input image_{slot}, shown below.")
-            parts.append({"type": "text", "text": f"<Picture {pic_n}>:"})
-            parts.append({"type": "image_url", "image_url": {"url": media.pil_to_data_url(pil, max_side)}})
+            pic_desc.append(f"<Picture {pic_n}>: reference still image ({w}x{h}) from reference input {slot}, shown "
+                            "below - a separate image, NOT a frame of any video.")
+            pic_parts.append({"type": "text", "text": f"<Picture {pic_n}> (reference image):"})
+            pic_parts.append({"type": "image_url", "image_url": {"url": media.pil_to_data_url(pil, max_side)}})
 
         ff = kw.get("first_frame")
         ff_label = None
@@ -227,8 +229,8 @@ class MiniMaxH3R2VPrompter:
                 w, h = pil.size
                 pic_desc.append(f"{ff_label}: EDITED FIRST FRAME of the target video ({w}x{h}), from input first_frame, "
                                 "shown below. It is pinned at frame 0.")
-                parts.append({"type": "text", "text": f"{ff_label} (edited first frame):"})
-                parts.append({"type": "image_url", "image_url": {"url": media.pil_to_data_url(pil, max_side)}})
+                pic_parts.append({"type": "text", "text": f"{ff_label} (edited first frame):"})
+                pic_parts.append({"type": "image_url", "image_url": {"url": media.pil_to_data_url(pil, max_side)}})
                 first_image = ff[:1] if hasattr(ff, "__getitem__") else ff
         kw["_ff_label"] = ff_label
 
@@ -256,6 +258,13 @@ class MiniMaxH3R2VPrompter:
             for i, pil in samples:
                 parts.append({"type": "text", "text": f"<Video {vid_n}> t={i / media.H3_FPS:.1f}s:"})
                 parts.append({"type": "image_url", "image_url": {"url": media.pil_to_data_url(pil, video_side)}})
+
+        if pic_parts:
+            # pictures last: after dozens of video frames a single picture shown first is easily overlooked
+            if parts:
+                parts.append({"type": "text", "text": "REFERENCE PICTURES (separate still images, NOT frames of the "
+                                                      "video above - look at each one closely):"})
+            parts.extend(pic_parts)
 
         for slot in range(1, MAX_AUDIOS + 1):
             aud = kw.get(f"audio_{slot}")
@@ -354,7 +363,8 @@ class MiniMaxH3R2VPrompter:
         if simple:
             user_text = prompts.build_simple_text(
                 instruction=instruction, task=task, pictures=pics, videos=vids, audios=auds,
-                asset_notes=kw.get("asset_notes", ""), extra_rules=kw.get("extra_rules", ""))
+                asset_notes=kw.get("asset_notes", ""), extra_rules=kw.get("extra_rules", ""),
+                first_frame_label=kw.get("_ff_label"))
             system_text = prompts.SYSTEM_PROMPT_SIMPLE
             parts = _drop_video_parts(parts)  # the change is described from the request/pictures only -> faster
             opener = prompts.simple_opener(task, bool(vids), any("synchronized audio track" in a for a in auds))
@@ -362,6 +372,10 @@ class MiniMaxH3R2VPrompter:
             max_tokens = min(int(max_tokens), 400)
         if kw.get("_text_only"):
             parts = []  # a text-only server rejects image parts
+        n_img = sum(1 for p in parts if p.get("type") == "image_url")
+        n_vid = sum(1 for p in parts if p.get("type") == "text" and p.get("text", "").startswith("<Video"))
+        lc.log(f"LLM input: {n_img - n_vid} picture(s) + {n_vid} video frame(s)"
+               + (" (video frames not sent in simple style)" if simple and vids else ""))
         user_content = [{"type": "text", "text": user_text}, *parts] if parts else user_text
 
         think_on = thinking != "off"
@@ -405,7 +419,7 @@ class MiniMaxH3R2VPrompter:
                 body = body.rstrip()
                 if body and body[-1] not in ".!?":
                     body += "."
-                prompt = opener + body + " " + prompts.SIMPLE_CLOSER
+                prompt = opener + body + " " + prompts.simple_closer(kw.get("edit_mode", ""))
         else:
             prompt = prompts.clean_output(
                 content, keep_timed_beats=bool(kw.get("timed_beats", False)) and task != "video editing")
@@ -499,6 +513,8 @@ def _drop_video_parts(parts: list[dict]) -> list[dict]:
         if p.get("type") == "text" and p.get("text", "").startswith("<Video"):
             skip_next = True
             continue
+        if p.get("type") == "text" and p.get("text", "").startswith("REFERENCE PICTURES"):
+            continue  # header only makes sense after video frames
         out.append(p)
     return out
 
