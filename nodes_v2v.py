@@ -195,15 +195,21 @@ class MiniMaxH3V2VEditLLM:
                            "= area mask (mis. baju lama) hanya DISEMBUNYIKAN dari referensi <Video 1>, lalu seluruh frame "
                            "digambar ulang mengikuti pose - baju baru bebas bentuknya, H3 tidak bisa menyalin baju lama.",
             }),
+            "describe_refs": ("BOOLEAN", {
+                "default": True,
+                "tooltip": "LLM melihat tiap ref_image SENDIRIAN dulu (tanpa frame video) dan mendeskripsikannya; deskripsi "
+                           "itu dipakai sebagai fakta di prompt, jadi detail baju/objek tidak tertukar dengan video. "
+                           "+~1-2 s per gambar (di-cache). Hasilnya dicetak di console: '<Picture 1> seen as: ...'.",
+            }),
         })
         return {"required": required, "optional": optional}
 
     # ------------------------------------------------------------------ prompt
     def _write_prompt(self, *, edit_mode, instruction, llm_model, mmproj, thinking, length, seed, src, refs, first,
                       audio, asset_notes, video_sample_fps, context_size, max_tokens, duration, use_src, mask_info,
-                      prompt_style="full (official H3)"):
+                      prompt_style="full (official H3)", describe_refs=True):
         key = (edit_mode, instruction, llm_model, mmproj, thinking, length, seed, asset_notes, video_sample_fps, mask_info,
-               prompt_style,
+               prompt_style, describe_refs,
                bool(audio), use_src, v2v.tensor_sig(src), tuple(v2v.tensor_sig(r) for r in refs),
                v2v.tensor_sig(first))
         if key in self._cache:
@@ -241,7 +247,7 @@ class MiniMaxH3V2VEditLLM:
             max_tokens=max_tokens, seed=seed, model=llm_model, mmproj=mmproj,
             asset_notes=asset_notes, extra_rules=rules, video_sample_fps=video_sample_fps,
             video_max_side=512, image_max_side=768, context_size=context_size, print_to_console=True,
-            prompt_style=prompt_style, edit_mode=edit_mode, **kw)
+            prompt_style=prompt_style, edit_mode=edit_mode, describe_refs=describe_refs, **kw)
         prompt = out[0]
         if len(self._cache) > 16:
             self._cache.clear()
@@ -253,7 +259,7 @@ class MiniMaxH3V2VEditLLM:
             length, seed, model_patch=None, control_pose=None, control_depth=None, control_edge=None,
             first_frame=None, sam3_model=None, sam3_clip=None, mask_prompt="", mask_invert=False, mask_grow=12,
             mask_threshold=0.5, mask_max_objects=8, mask=None, use_mask=True, hide_masked_in_reference=True, mask_strength=1.0,
-            mask_patch="separate", frame_count=0, prompt_style="full (official H3)", mask_mode="inpaint", audio_vae=None, source_audio=None, reuse_audio=False, asset_notes="",
+            mask_patch="separate", frame_count=0, prompt_style="full (official H3)", mask_mode="inpaint", describe_refs=True, audio_vae=None, source_audio=None, reuse_audio=False, asset_notes="",
             prompt_override="", motion_lock=1.0, pose_strength=-1.0, depth_strength=-1.0, edge_strength=-1.0,
             structure_end_percent=-1.0, use_source_as_reference=True, start_seconds=0.0, max_seconds=15.0,
             resolution="768p (native)", ref_image_size="max", video_sample_fps=2.0, unload_llm_after_prompt=False,
@@ -294,7 +300,7 @@ class MiniMaxH3V2VEditLLM:
                 thinking=thinking, length=length, seed=seed, src=src, refs=refs, first=first, audio=audio,
                 asset_notes=asset_notes, video_sample_fps=video_sample_fps, context_size=context_size,
                 max_tokens=max_tokens, duration=tl.duration, use_src=use_source_as_reference, mask_info=mask_info,
-                prompt_style=prompt_style)
+                prompt_style=prompt_style, describe_refs=describe_refs)
             if unload_llm_after_prompt:
                 managed_server.stop(_CFG)
 

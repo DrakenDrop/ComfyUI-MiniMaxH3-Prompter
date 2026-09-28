@@ -282,7 +282,11 @@ def build_user_text(
             "request does not say what a picture is for, assume it shows the new element to apply. Define each "
             "picture's content in subject_definitions, give it a retention line (attribute_transfer for a garment or "
             "attribute put on another subject, fully_preserved for a person/object inserted as is, weak_reference for "
-            "style only), and refer to it by its label in detailed_description (e.g. 'the dress from <Picture 1>')."
+            "style only), and refer to it by its label in detailed_description (e.g. 'the dress from <Picture 1>'). "
+            "A 'VERIFIED CONTENT' description in ASSETS was made by looking at that picture alone: it is authoritative - "
+            "use its details (length, sleeves/straps, material, construction, color) and never contradict or embellish "
+            "them; describe the garment's movement only as that garment can move (e.g. a short fitted dress does not "
+            "billow)."
         )
     if task == "video continuation":
         lines.append(
@@ -400,7 +404,8 @@ def build_simple_text(*, instruction: str, task: str, pictures: list[str], video
         lines += ["", f"The attached image(s) {refs} are the reference(s) for this request. Look at them and describe "
                       "the element taken from them concretely from what you SEE (type, exact color, material, pattern, "
                       "cut, details), naming its label. If the request does not say what a picture is for, it shows "
-                      "the new element to apply."]
+                      "the new element to apply. A 'VERIFIED CONTENT' description is authoritative: keep its details "
+                      "(length, sleeves/straps, material, construction, color) and never contradict them."]
     if first_frame_label:
         lines += ["", f"{first_frame_label} is the edited first frame: describe the new element exactly as it looks "
                       f"there and name {first_frame_label}."]
@@ -445,3 +450,30 @@ def clean_simple(text: str) -> str:
     t = _strip_inshot_timestamps(t)
     t = re.sub(r"\s*\n+\s*", " ", t)
     return re.sub(r"\s{2,}", " ", t).strip()
+
+
+# ------------------------------------------------------------------ reference picture description (describe_refs)
+SYSTEM_PROMPT_CAPTION = """You look at ONE reference image and describe precisely what it shows, for a video-editing prompt writer who cannot see it.
+
+Output 1-3 plain English sentences, starting with the picture label given. No lists, no markdown, no opinions.
+
+Describe only the element(s) the request will use, concretely and exactly as visible:
+- garment: type, length (e.g. mini / above the knee / midi / floor-length), exact color shade, material and finish (e.g. glossy satin, matte knit), neckline, straps or sleeves (or sleeveless), fit (bodycon, loose ...), construction details (ruching, drawstrings, slits, buttons, hem shape), pattern or print (or plain);
+- person: apparent sex and age range, face, hair (color, length, style), body type, clothing;
+- object: what it is, shape, size cues, color, material, details;
+- environment or style: the key visible features.
+Ignore mannequins, hangers, models' faces, studio backgrounds and watermarks unless the request is about them (then say e.g. "shown on a mannequin").
+Never guess anything that is not visible; never add embroidery, patterns or sleeves that are not there."""
+
+
+def build_caption_text(instruction: str, n: int, kind: str) -> str:
+    return (f"REQUEST (how the picture will be used): {instruction.strip() or '(not given)'}\n"
+            f"The image below is <Picture {n}> ({kind}). Describe it now, starting with '<Picture {n}>:'.")
+
+
+def clean_caption(text: str, n: int) -> str:
+    t = _FENCE.sub("", (text or "").strip()).strip()
+    t = re.sub(rf"^\s*<Picture {n}>\s*(\([^)]*\))?\s*:\s*", "", t)
+    t = re.sub(r"\s*\n+\s*", " ", t)
+    t = re.sub(r"\s{2,}", " ", t).strip()
+    return t[:900]

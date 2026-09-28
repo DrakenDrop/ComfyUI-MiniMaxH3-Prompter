@@ -31,6 +31,8 @@ SAMPLING = {
     "on": dict(temperature=1.0, top_p=0.95, top_k=20, min_p=0.0, presence_penalty=0.0),
 }
 FIRST_FIELD = "subject_definitions:"
+# factual description of a reference picture: low temperature, no creativity
+CAPTION_SAMPLING = dict(temperature=0.2, top_p=0.8, top_k=20, min_p=0.0, presence_penalty=0.0)
 
 
 class MiniMaxH3R2VPrompter:
@@ -178,6 +180,12 @@ class MiniMaxH3R2VPrompter:
                            "Untuk video editing: '[video editing] The target video is an edited version of <Video 1>: "
                            "<perubahan>. Everything else stays exactly as in <Video 1>.' Lebih cepat.",
             }),
+            "describe_refs": ("BOOLEAN", {
+                "default": True,
+                "tooltip": "Sebelum menulis prompt, LLM melihat tiap gambar ref SENDIRIAN (tanpa frame video) dan "
+                           "mendeskripsikannya (+~1-2 s per gambar, di-cache). Deskripsi itu dipakai sebagai fakta, jadi "
+                           "detail baju/objek tidak tertukar dengan isi video. Hasilnya dicetak di console.",
+            }),
         })
         return {"required": required, "optional": optional}
 
@@ -215,8 +223,10 @@ class MiniMaxH3R2VPrompter:
             w, h = pil.size
             pic_desc.append(f"<Picture {pic_n}>: reference still image ({w}x{h}) from reference input {slot}, shown "
                             "below - a separate image, NOT a frame of any video.")
+            url = media.pil_to_data_url(pil, max_side)
+            kw.setdefault("_pic_urls", []).append((pic_n, url, "reference image"))
             pic_parts.append({"type": "text", "text": f"<Picture {pic_n}> (reference image):"})
-            pic_parts.append({"type": "image_url", "image_url": {"url": media.pil_to_data_url(pil, max_side)}})
+            pic_parts.append({"type": "image_url", "image_url": {"url": url}})
 
         ff = kw.get("first_frame")
         ff_label = None
@@ -229,8 +239,10 @@ class MiniMaxH3R2VPrompter:
                 w, h = pil.size
                 pic_desc.append(f"{ff_label}: EDITED FIRST FRAME of the target video ({w}x{h}), from input first_frame, "
                                 "shown below. It is pinned at frame 0.")
+                url = media.pil_to_data_url(pil, max_side)
+                kw.setdefault("_pic_urls", []).append((pic_n, url, "edited first frame"))
                 pic_parts.append({"type": "text", "text": f"{ff_label} (edited first frame):"})
-                pic_parts.append({"type": "image_url", "image_url": {"url": media.pil_to_data_url(pil, max_side)}})
+                pic_parts.append({"type": "image_url", "image_url": {"url": url}})
                 first_image = ff[:1] if hasattr(ff, "__getitem__") else ff
         kw["_ff_label"] = ff_label
 
@@ -332,6 +344,14 @@ class MiniMaxH3R2VPrompter:
         parts, pics, vids, auds, first_image = self._collect_assets(
             kw, frames, kw.get("video_sample_fps", 2.0), kw.get("video_max_side", 512),
             kw.get("image_max_side", 768))
+
+        if kw.get("describe_refs", True) and kw.get("_pic_urls") and not kw.get("_text_only"):
+            captions = self._describe_pictures(server_url, model_alias, kw["_pic_urls"], instruction,
+                                               int(seed), float(_CFG.get("request_timeout_seconds", 600)))
+            for n, cap in captions.items():
+                for i, d in enumerate(pics):
+                    if d.startswith(f"<Picture {n}>"):
+                        pics[i] = d + f" VERIFIED CONTENT (checked on the picture alone): {cap}"
 
         keyframe = None
         kf_pic = int(kw.get("keyframe_picture", 0) or 0)
@@ -436,6 +456,44 @@ class MiniMaxH3R2VPrompter:
         if kf_image is None:
             kf_image = _blank_image()
         return (prompt, int(frames), float(eff), first_image, reasoning, kf_image, int(kf_idx))
+
+    _caption_cache: dict = {}
+
+    def _describe_pictures(self, server_url, model_alias, pic_urls, instruction, seed, timeout) -> dict:
+        """One short, picture-only request per image -> {pic_n: description}. Nothing else is in the context, so
+        the description cannot be mixed up with the video frames."""
+        import hashlib
+
+        out: dict = {}
+        for n, url, kind in pic_urls:
+            key = (server_url, model_alias, hashlib.md5(url.encode("ascii")).hexdigest(), kind, instruction.strip())
+            cap = self._caption_cache.get(key)
+            if cap is None:
+                user = {"role": "user", "content": [
+                    {"type": "text", "text": prompts.build_caption_text(instruction, n, kind)},
+                    {"type": "image_url", "image_url": {"url": url}},
+                ]}
+                base = {"model": model_alias, "max_tokens": 220, "seed": seed, "cache_prompt": True,
+                        **CAPTION_SAMPLING}
+                pre = f"<Picture {n}>: "
+                t0 = time.time()
+                try:
+                    content, _, _ = self._run(server_url, base, {"role": "system", "content": prompts.SYSTEM_PROMPT_CAPTION},
+                                              user, "off", timeout, False, None, prefill=pre)
+                except Exception as exc:  # noqa: BLE001  (the main prompt still works without it)
+                    lc.log(f"describe_refs: <Picture {n}> could not be described ({exc}); continuing without it.")
+                    continue
+                cap = prompts.clean_caption(content, n)
+                if not cap:
+                    continue
+                if len(self._caption_cache) > 64:
+                    self._caption_cache.clear()
+                self._caption_cache[key] = cap
+                lc.log(f"<Picture {n}> seen as ({time.time() - t0:.1f}s): {cap}")
+            else:
+                lc.log(f"<Picture {n}> seen as (cached): {cap}")
+            out[n] = cap
+        return out
 
     @staticmethod
     def _run(server_url, base, system, user, thinking, timeout, print_tokens, on_token, prefill=FIRST_FIELD + "\n"):
