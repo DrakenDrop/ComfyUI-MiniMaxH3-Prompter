@@ -189,6 +189,12 @@ class MiniMaxH3V2VEditLLM:
                 "tooltip": "simple = prompt pendek yang hanya menjelaskan perubahannya: '[video editing] The target video "
                            "is an edited version of <Video 1>: <perubahan>. Everything else stays exactly as in <Video 1>.'",
             }),
+            "mask_mode": (["inpaint", "reference only"], {
+                "default": "inpaint",
+                "tooltip": "inpaint = hanya area mask yang digambar ulang (luar mask disalin dari sumber). reference only "
+                           "= area mask (mis. baju lama) hanya DISEMBUNYIKAN dari referensi <Video 1>, lalu seluruh frame "
+                           "digambar ulang mengikuti pose - baju baru bebas bentuknya, H3 tidak bisa menyalin baju lama.",
+            }),
         })
         return {"required": required, "optional": optional}
 
@@ -215,7 +221,12 @@ class MiniMaxH3V2VEditLLM:
             if audio is not None:
                 kw["video_1_audio"] = audio
         rules = v2v.PRESET_RULES.get(edit_mode, "")
-        if mask_info:
+        if mask_info and len(mask_info) > 2:  # reference-only: old content hidden, whole frame re-rendered
+            what = f"'{mask_info[0]}'" if mask_info[0] else "the masked element"
+            rules += ("\nREPLACED ELEMENT: in <Video 1> the old " + what + " is hidden (grey), so it must be drawn "
+                      "fresh from the request/pictures; everything else follows <Video 1>. Describe the new element "
+                      "concretely (type, color, material, cut, fit) - never the old one.")
+        elif mask_info:
             rules += "\n" + (v2v.mask_rule(*mask_info) if mask_info[0] else
                              "MASKED EDIT: only the masked region is regenerated; everything else is copied from "
                              "<Video 1>. Put the detail into the new content; describe the kept area briefly.")
@@ -240,7 +251,7 @@ class MiniMaxH3V2VEditLLM:
             length, seed, model_patch=None, control_pose=None, control_depth=None, control_edge=None,
             first_frame=None, sam3_model=None, sam3_clip=None, mask_prompt="", mask_invert=False, mask_grow=12,
             mask_threshold=0.5, mask_max_objects=8, mask=None, use_mask=True, hide_masked_in_reference=True, mask_strength=1.0,
-            mask_patch="separate", frame_count=0, prompt_style="full (official H3)", audio_vae=None, source_audio=None, reuse_audio=False, asset_notes="",
+            mask_patch="separate", frame_count=0, prompt_style="full (official H3)", mask_mode="inpaint", audio_vae=None, source_audio=None, reuse_audio=False, asset_notes="",
             prompt_override="", motion_lock=1.0, pose_strength=-1.0, depth_strength=-1.0, edge_strength=-1.0,
             structure_end_percent=-1.0, use_source_as_reference=True, start_seconds=0.0, max_seconds=15.0,
             resolution="768p (native)", ref_image_size="max", video_sample_fps=2.0, unload_llm_after_prompt=False,
@@ -269,6 +280,9 @@ class MiniMaxH3V2VEditLLM:
             mask, sam3_model, sam3_clip, mask_prompt = None, None, None, ""
         edit_mask, mask_info = self._make_mask(src, tl, width, height, edit_mode, mask, sam3_model, sam3_clip,
                                                mask_prompt, mask_invert, mask_grow, mask_threshold, mask_max_objects)
+        ref_only = edit_mask is not None and mask_mode.startswith("reference")
+        if ref_only and mask_info is not None:
+            mask_info = (mask_info[0], mask_info[1], "reference only")
 
         # ---- prompt -------------------------------------------------------------------------------
         prompt = (prompt_override or "").strip()
@@ -289,7 +303,7 @@ class MiniMaxH3V2VEditLLM:
         if len(core_refs) > 9:
             raise ValueError(f"MiniMax H3 accepts at most 9 reference images (got {len(core_refs)})")
         ref_src = src
-        if edit_mask is not None and hide_masked_in_reference and use_source_as_reference:
+        if edit_mask is not None and (hide_masked_in_reference or ref_only) and use_source_as_reference:
             # the <Video 1> reference would otherwise show the old content inside the mask, and H3 tends to copy
             # it straight back; the Fun ControlNet inpaint hint still gets the real source around the mask
             m = edit_mask.to(src.device, src.dtype).unsqueeze(-1)
@@ -314,14 +328,25 @@ class MiniMaxH3V2VEditLLM:
         if any(connected.values()) and model_patch is None:
             raise ValueError("control videos are connected but model_patch (MiniMax H3 Fun ControlNet-Union, "
                              "loaded with ModelPatchLoader) is missing")
-        if edit_mask is not None and model_patch is None:
+        if edit_mask is not None and model_patch is None and not ref_only:
             raise ValueError("a mask needs model_patch (MiniMax H3 Fun ControlNet-Union): the masked video "
                              "inpainting runs through it")
         out_model = model
+        if ref_only and connected.get("pose"):
+            # depth/edge would pin the OLD garment's silhouette -> pose only unless set manually
+            if depth_strength < 0 and connected.get("depth"):
+                depth_strength = 0.0
+                lc.log("V2V: reference only -> depth auto-strength set to 0 (pose only); set depth_strength to override.")
+            if edge_strength < 0 and connected.get("edge"):
+                edge_strength = 0.0
         plan = v2v.resolve_strengths(edit_mode, motion_lock, connected, pose_strength, depth_strength,
                                      edge_strength, structure_end_percent)
         combined = mask_patch.startswith("combined")
-        mask_pending = edit_mask if combined else None
+        inpaint_mask = None if ref_only else edit_mask  # reference-only: no inpaint patch at all
+        if ref_only:
+            lc.log("V2V: mask_mode = reference only -> masked area hidden in <Video 1>, whole frame re-rendered "
+                   "(no inpainting).")
+        mask_pending = inpaint_mask if combined else None
         for name, (strength, end) in plan.items():
             if strength <= 0:
                 continue
@@ -334,8 +359,8 @@ class MiniMaxH3V2VEditLLM:
             out_model = _args(h3.MiniMaxH3FunControlNetApply.execute(
                 model=out_model, model_patch=model_patch, vae=vae, strength=strength,
                 start_percent=0.0, end_percent=end, control_video=cv, **extra))[0]
-        if not combined and edit_mask is not None:
-            mask_pending = edit_mask
+        if not combined and inpaint_mask is not None:
+            mask_pending = inpaint_mask
         if mask_pending is not None and mask_strength > 0:  # separate inpaint patch (or no control connected)
             ms = float(mask_strength) if (not combined or not any(connected.values())) else 1.0
             lc.log(f"V2V: mask inpainting patch strength={ms:.2f}")
