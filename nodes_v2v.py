@@ -419,11 +419,45 @@ class MiniMaxH3ConformVideo:
         return (frames, int(tl.frame_count), float(v2v.H3_FPS), int(w), int(h), tl.take_audio(audio))
 
 
+class MiniMaxH3MatchColor:
+    """After VAE Decode: give the edited video the lighting / exposure / white balance of the source again."""
+
+    CATEGORY = CATEGORY
+    FUNCTION = "run"
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("images",)
+    DESCRIPTION = ("Per-frame Lab colour/lighting match of the decoded H3 video to the source frames. Statistics are "
+                   "taken outside the edit mask only, so the edited element keeps its new colour while the whole "
+                   "frame gets the source lighting back. Temporally smoothed (no flicker).")
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "images": ("IMAGE", {"tooltip": "Decoded H3 result (VAE Decode)."}),
+                "source_frames": ("IMAGE", {"tooltip": "source_frames output of V2V Edit + LLM (same frames/size)."}),
+                "strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.05}),
+                "smooth_frames": ("INT", {"default": 4, "min": 0, "max": 24,
+                                          "tooltip": "Temporal smoothing radius of the colour statistics."}),
+            },
+            "optional": {
+                "mask": ("MASK", {"tooltip": "mask output of V2V Edit + LLM (1 = edited, excluded from the stats)."}),
+            },
+        }
+
+    def run(self, images, source_frames, strength, smooth_frames, mask=None):
+        if mask is not None and float(mask.max()) <= 0:
+            mask = None
+        return (v2v.match_color(images, source_frames, mask=mask, strength=strength, smooth_frames=smooth_frames),)
+
+
 NODE_CLASS_MAPPINGS = {
+    "MiniMaxH3MatchColor": MiniMaxH3MatchColor,
     "MiniMaxH3V2VEditLLM": MiniMaxH3V2VEditLLM,
     "MiniMaxH3PrompterConformVideo": MiniMaxH3ConformVideo,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
+    "MiniMaxH3MatchColor": "MiniMax H3 Match Color to Source (lighting fix)",
     "MiniMaxH3V2VEditLLM": "MiniMax H3 V2V Edit + LLM (Fun ControlNet)",
     "MiniMaxH3PrompterConformVideo": "MiniMax H3 Conform Video (24 fps)",
 }

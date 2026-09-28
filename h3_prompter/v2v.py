@@ -365,3 +365,100 @@ def mask_rule(prompt: str, invert: bool) -> str:
         "content of the masked area (look, material, how it follows the body, contact shadows and edges where it "
         "meets the kept area); describe the kept area only briefly for context."
     )
+
+
+# ----------------------------------------------------------------------------- color / lighting match
+def _srgb_to_lab(x):
+    """x: [...,3] in 0..1 -> Lab (D65)."""
+    import torch
+
+    lin = torch.where(x <= 0.04045, x / 12.92, ((x + 0.055) / 1.055) ** 2.4)
+    m = torch.tensor([[0.4124564, 0.3575761, 0.1804375],
+                      [0.2126729, 0.7151522, 0.0721750],
+                      [0.0193339, 0.1191920, 0.9503041]], dtype=x.dtype, device=x.device)
+    xyz = lin @ m.T
+    xyz = xyz / torch.tensor([0.95047, 1.0, 1.08883], dtype=x.dtype, device=x.device)
+    eps = 216 / 24389
+    kappa = 24389 / 27
+    f = torch.where(xyz > eps, xyz.clamp(min=1e-8) ** (1 / 3), (kappa * xyz + 16) / 116)
+    L = 116 * f[..., 1] - 16
+    a = 500 * (f[..., 0] - f[..., 1])
+    b = 200 * (f[..., 1] - f[..., 2])
+    return torch.stack([L, a, b], dim=-1)
+
+
+def _lab_to_srgb(lab):
+    import torch
+
+    L, a, b = lab[..., 0], lab[..., 1], lab[..., 2]
+    fy = (L + 16) / 116
+    fx = fy + a / 500
+    fz = fy - b / 200
+    eps = 216 / 24389
+    kappa = 24389 / 27
+    fx3, fz3 = fx ** 3, fz ** 3
+    xr = torch.where(fx3 > eps, fx3, (116 * fx - 16) / kappa)
+    yr = torch.where(L > kappa * eps, fy ** 3, L / kappa)
+    zr = torch.where(fz3 > eps, fz3, (116 * fz - 16) / kappa)
+    xyz = torch.stack([xr * 0.95047, yr, zr * 1.08883], dim=-1)
+    m = torch.tensor([[3.2404542, -1.5371385, -0.4985314],
+                      [-0.9692660, 1.8760108, 0.0415560],
+                      [0.0556434, -0.2040259, 1.0572252]], dtype=lab.dtype, device=lab.device)
+    lin = (xyz @ m.T).clamp(0, 1)
+    return torch.where(lin <= 0.0031308, lin * 12.92, 1.055 * lin.clamp(min=1e-8) ** (1 / 2.4) - 0.055).clamp(0, 1)
+
+
+def match_color(images, reference, mask=None, strength: float = 1.0, smooth_frames: int = 4, chunk: int = 16):
+    """Per-frame Lab mean/std transfer so `images` get the lighting/exposure/white balance of `reference`.
+    Statistics are measured only OUTSIDE `mask` (1 = edited area), then applied to the whole frame, so the kept
+    area matches the source and the edited element gets the same correction. Stats are smoothed over time."""
+    import torch
+    import torch.nn.functional as F
+
+    n, h, w, _ = images.shape
+    ref = reference[..., :3]
+    if ref.shape[0] != n:
+        idx = torch.linspace(0, ref.shape[0] - 1, n).round().long() if ref.shape[0] > 1 else torch.zeros(n).long()
+        ref = ref[idx]
+    if ref.shape[1] != h or ref.shape[2] != w:
+        ref = F.interpolate(ref.movedim(-1, 1).float(), size=(h, w), mode="bilinear", align_corners=False).movedim(1, -1)
+    keep = None
+    if mask is not None:
+        mk = fit_mask(mask.float(), n, w, h)
+        keep = (1.0 - mk).to(images.device)
+
+    def stats(x_lab, k):
+        if k is None:
+            mu = x_lab.mean(dim=(1, 2))
+            sd = x_lab.std(dim=(1, 2))
+        else:
+            wgt = k.unsqueeze(-1)
+            tot = wgt.sum(dim=(1, 2)).clamp(min=1.0)
+            mu = (x_lab * wgt).sum(dim=(1, 2)) / tot
+            sd = (((x_lab - mu[:, None, None]) ** 2 * wgt).sum(dim=(1, 2)) / tot).sqrt()
+        return mu, sd.clamp(min=1e-3)
+
+    mus_x, sds_x, mus_r, sds_r = [], [], [], []
+    for i in range(0, n, chunk):
+        k = keep[i:i + chunk] if keep is not None else None
+        mx, sx = stats(_srgb_to_lab(images[i:i + chunk, ..., :3].float()), k)
+        mr, sr = stats(_srgb_to_lab(ref[i:i + chunk].to(images.device).float()), k)
+        mus_x.append(mx); sds_x.append(sx); mus_r.append(mr); sds_r.append(sr)
+    mu_x, sd_x = torch.cat(mus_x), torch.cat(sds_x)
+    mu_r, sd_r = torch.cat(mus_r), torch.cat(sds_r)
+
+    if smooth_frames > 0 and n > 1:  # moving average -> no flicker from per-frame stats
+        def smooth(t):
+            k = 2 * smooth_frames + 1
+            pad = F.pad(t.T.unsqueeze(0), (smooth_frames, smooth_frames), mode="replicate")
+            return F.avg_pool1d(pad, kernel_size=k, stride=1)[0].T
+        mu_x, sd_x, mu_r, sd_r = smooth(mu_x), smooth(sd_x), smooth(mu_r), smooth(sd_r)
+
+    out = []
+    for i in range(0, n, chunk):
+        lab = _srgb_to_lab(images[i:i + chunk, ..., :3].float())
+        sl = slice(i, i + lab.shape[0])
+        new = (lab - mu_x[sl, None, None]) / sd_x[sl, None, None] * sd_r[sl, None, None] + mu_r[sl, None, None]
+        new = lab + (new - lab) * float(strength)
+        out.append(_lab_to_srgb(new).to(images.dtype))
+    return torch.cat(out, dim=0)

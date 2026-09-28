@@ -247,9 +247,16 @@ def build_user_text(
             "them from <Video 1> (and the pose control). Write exactly one sentence for it, e.g. '<Subject 1> performs "
             "exactly the same motion, gestures, expressions, lip movements and timing as in <Video 1>.' No timestamps "
             "inside a shot; '[Shot N] At MM:SS.mmm' only for cuts that really exist in the source frames. Spend the "
-            "words on the edited element (look, material, fit, how it follows the body) and on the stable look of the "
-            "scene (setting, lighting, framing, camera). Do not add events, effects, lighting or color changes that "
-            "are neither visible in the frames nor requested."
+            "words on the edited element (look, material, fit, how it follows the body). Do not add events, effects, "
+            "lighting or color changes that are neither visible in the frames nor requested."
+        )
+        lines.append(
+            "- LIGHTING IN VIDEO EDIT: do NOT re-describe or re-design the lighting, exposure, white balance or color "
+            "grade - any wording like 'warm key light', 'cinematic lighting', 'soft glow' makes H3 re-light the shot. "
+            "The style sentence at the start of detailed_description must simply be e.g. 'Same live-action footage, "
+            "lighting, exposure and color grade as <Video 1>.' Mention light only where the edited element meets it, "
+            "and only as it already is in the frames (e.g. 'the new dress picks up the same light as the rest of the "
+            "scene'). Do not use words like cinematic, dramatic, moody, glowing, vibrant, golden."
         )
         if audios:
             lines.append(

@@ -174,6 +174,20 @@ H3 Reference to Video.positive/latent → Add Guide (first_frame, frame_idx 0) �
 
 Gambar yang sama tetap disambung ke `ref_image_N` di node H3 supaya labelnya ada.
 
+## Lighting berubah setelah edit? (Match Color to Source)
+
+Tanpa mask, H3 menggambar ulang seluruh frame, jadi exposure, white balance, atau pencahayaan bisa sedikit bergeser. Ada dua perbaikan:
+
+1. **Prompt**: untuk video editing, LLM tidak lagi mendeskripsikan ulang lighting (kata seperti "warm key light" atau "cinematic" membuat H3 menata ulang cahaya). Cukup ditulis "same lighting, exposure and color grade as `<Video 1>`".
+2. **Node MiniMax H3 Match Color to Source** (setelah VAE Decode):
+   ```
+   VAEDecode ─> images
+   V2V Edit + LLM.source_frames ─> source_frames
+   V2V Edit + LLM.mask ─> mask (opsional)
+   → CreateVideo
+   ```
+   Warna dan kecerahan tiap frame dicocokkan lagi ke video asli (Lab, dihaluskan antar-frame supaya tidak flicker). Statistiknya hanya diukur di luar mask, jadi elemen yang diedit (misalnya dress merah) tetap merah.
+
 ## Contoh pemakaian
 
 **Edit video:** `task = video editing`, `duration_seconds = 0` (ikut panjang video, dipotong ke 17k+5 seperti node H3), `video_1` = frame video, `video_1_audio` = audionya. Suara asli otomatis dipakai ulang (fully_copy) kecuali instruksi bilang lain.
