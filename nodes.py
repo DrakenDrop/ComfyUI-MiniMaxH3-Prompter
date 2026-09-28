@@ -172,6 +172,12 @@ class MiniMaxH3R2VPrompter:
                 "tooltip": "Panjang video dalam frame (@24fps): 124, 141, ... 345, 362. Kalau > 0, menggantikan "
                            "duration_seconds. Nilai di luar grid 17k+5 dibulatkan ke yang terdekat.",
             }),
+            "prompt_style": (["full (official H3)", "simple"], {
+                "default": "full (official H3)",
+                "tooltip": "simple = 1-3 kalimat yang hanya menjelaskan perubahannya (tanpa 6 bagian, tanpa [Shot]). "
+                           "Untuk video editing: '[video editing] The target video is an edited version of <Video 1>: "
+                           "<perubahan>. Everything else stays exactly as in <Video 1>.' Lebih cepat.",
+            }),
         })
         return {"required": required, "optional": optional}
 
@@ -341,6 +347,19 @@ class MiniMaxH3R2VPrompter:
             allow_invented_dialogue=allow_invented_dialogue,
             asset_notes=kw.get("asset_notes", ""), extra_rules=kw.get("extra_rules", ""),
         )
+        simple = str(kw.get("prompt_style", "full")).startswith("simple")
+        prefill = FIRST_FIELD + "\n"
+        system_text = prompts.SYSTEM_PROMPT_R2V
+        opener = None
+        if simple:
+            user_text = prompts.build_simple_text(
+                instruction=instruction, task=task, pictures=pics, videos=vids, audios=auds,
+                asset_notes=kw.get("asset_notes", ""), extra_rules=kw.get("extra_rules", ""))
+            system_text = prompts.SYSTEM_PROMPT_SIMPLE
+            parts = _drop_video_parts(parts)  # the change is described from the request/pictures only -> faster
+            opener = prompts.simple_opener(task, bool(vids), any("synchronized audio track" in a for a in auds))
+            prefill = opener
+            max_tokens = min(int(max_tokens), 400)
         if kw.get("_text_only"):
             parts = []  # a text-only server rejects image parts
         user_content = [{"type": "text", "text": user_text}, *parts] if parts else user_text
@@ -359,7 +378,7 @@ class MiniMaxH3R2VPrompter:
             "cache_prompt": True,
             **samp,
         }
-        system = {"role": "system", "content": prompts.SYSTEM_PROMPT_R2V}
+        system = {"role": "system", "content": system_text}
         user = {"role": "user", "content": user_content}
 
         progress = None
@@ -377,10 +396,19 @@ class MiniMaxH3R2VPrompter:
         timeout = float(_CFG.get("request_timeout_seconds", 600))
         t0 = time.time()
         content, reasoning, timings = self._run(
-            server_url, base, system, user, thinking, timeout, print_tokens, on_token)
+            server_url, base, system, user, thinking, timeout, print_tokens, on_token, prefill=prefill)
 
-        prompt = prompts.clean_output(
-            content, keep_timed_beats=bool(kw.get("timed_beats", False)) and task != "video editing")
+        if simple:
+            prompt = prompts.clean_simple(content)
+            if opener:
+                body = prompt[len(opener.strip()):].strip() if prompt.startswith(opener.strip()) else prompt
+                body = body.rstrip()
+                if body and body[-1] not in ".!?":
+                    body += "."
+                prompt = opener + body + " " + prompts.SIMPLE_CLOSER
+        else:
+            prompt = prompts.clean_output(
+                content, keep_timed_beats=bool(kw.get("timed_beats", False)) and task != "video editing")
         dt = time.time() - t0
         tps = timings.get("predicted_per_second")
         lc.log(
@@ -396,23 +424,31 @@ class MiniMaxH3R2VPrompter:
         return (prompt, int(frames), float(eff), first_image, reasoning, kf_image, int(kf_idx))
 
     @staticmethod
-    def _run(server_url, base, system, user, thinking, timeout, print_tokens, on_token):
+    def _run(server_url, base, system, user, thinking, timeout, print_tokens, on_token, prefill=FIRST_FIELD + "\n"):
+        """prefill = visible start of the answer (prefilled so the model writes the answer at once); None = none."""
+        def _fix(content, used):
+            vis = (used or "").replace("<think>\n\n</think>\n\n", "")
+            if vis and not content.lstrip().startswith(vis.strip()):
+                content = vis + content.lstrip()
+            return content
+
         if thinking == "off":
-            attempts = [
-                # 1) template switch + prefill of the first field -> the model starts writing the answer at once
-                ({"enable_thinking": False}, FIRST_FIELD + "\n"),
-                # 2) server refused the prefill -> template switch only (reasoning guard still active)
-                ({"enable_thinking": False}, None),
-                # 3) template ignored the switch -> hard prefill of an empty think block
-                ({"enable_thinking": False}, "<think>\n\n</think>\n\n" + FIRST_FIELD + "\n"),
-                # 4) last resort: let it run, strip any reasoning afterwards
-                (None, None),
-            ]
+            think_block = "<think>\n\n</think>\n\n"
+            attempts = []
+            if prefill:
+                # 1) template switch + prefill -> the model starts writing the answer at once
+                attempts.append(({"enable_thinking": False}, prefill))
+            # 2) no prefill (server refused it) - the reasoning guard is still active
+            attempts.append(({"enable_thinking": False}, None))
+            # 3) template ignored the switch -> hard prefill of an empty think block
+            attempts.append(({"enable_thinking": False}, think_block + (prefill or "")))
+            # 4) last resort: let it run, strip any reasoning afterwards
+            attempts.append((None, None))
             last_err = None
-            for kwargs, prefill in attempts:
+            for kwargs, pre in attempts:
                 msgs = [system, user]
-                if prefill:
-                    msgs.append({"role": "assistant", "content": prefill})
+                if pre:
+                    msgs.append({"role": "assistant", "content": pre})
                 payload = dict(base, messages=msgs)
                 if kwargs:
                     payload["chat_template_kwargs"] = kwargs
@@ -430,8 +466,7 @@ class MiniMaxH3R2VPrompter:
                     lc.log(f"attempt failed: {exc}")
                     last_err = exc
                     continue
-                if prefill and not content.lstrip().startswith(FIRST_FIELD):
-                    content = FIRST_FIELD + "\n" + content.lstrip()
+                content = _fix(content, pre)
                 if content.strip():
                     return content, "", timings
             raise RuntimeError(f"[H3 Prompter] no prompt generated: {last_err}")
@@ -447,13 +482,25 @@ class MiniMaxH3R2VPrompter:
                 lc.log(f"thinking request failed ({exc}); retrying without reasoning_effort.")
         if not content.strip():
             lc.log("thinking used up max_tokens without a final answer -> fast retry with thinking off.")
-            payload = dict(base, **SAMPLING["off"],
-                           messages=[system, user, {"role": "assistant", "content": FIRST_FIELD + "\n"}],
-                           chat_template_kwargs={"enable_thinking": False})
+            msgs = [system, user] + ([{"role": "assistant", "content": prefill}] if prefill else [])
+            payload = dict(base, **SAMPLING["off"], messages=msgs, chat_template_kwargs={"enable_thinking": False})
             content, _, timings = lc.stream_chat(server_url, payload, timeout=timeout, print_tokens=print_tokens)
-            if not content.lstrip().startswith(FIRST_FIELD):
-                content = FIRST_FIELD + "\n" + content.lstrip()
+            content = _fix(content, prefill)
         return content, reasoning, timings
+
+
+def _drop_video_parts(parts: list[dict]) -> list[dict]:
+    """Remove '<Video N> t=..' label + frame pairs from the multimodal parts (keep pictures)."""
+    out, skip_next = [], False
+    for p in parts:
+        if skip_next:
+            skip_next = False
+            continue
+        if p.get("type") == "text" and p.get("text", "").startswith("<Video"):
+            skip_next = True
+            continue
+        out.append(p)
+    return out
 
 
 def _blank_image():

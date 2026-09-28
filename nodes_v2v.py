@@ -184,13 +184,20 @@ class MiniMaxH3V2VEditLLM:
                 "tooltip": "Panjang video H3 dalam frame (@24fps): 124, 141, ... 345, 362. 0 = otomatis dari video sumber "
                            "+ max_seconds. Nilai di luar grid 17k+5 dibulatkan ke yang terdekat.",
             }),
+            "prompt_style": (["full (official H3)", "simple"], {
+                "default": "full (official H3)",
+                "tooltip": "simple = prompt pendek yang hanya menjelaskan perubahannya: '[video editing] The target video "
+                           "is an edited version of <Video 1>: <perubahan>. Everything else stays exactly as in <Video 1>.'",
+            }),
         })
         return {"required": required, "optional": optional}
 
     # ------------------------------------------------------------------ prompt
     def _write_prompt(self, *, edit_mode, instruction, llm_model, mmproj, thinking, length, seed, src, refs, first,
-                      audio, asset_notes, video_sample_fps, context_size, max_tokens, duration, use_src, mask_info):
+                      audio, asset_notes, video_sample_fps, context_size, max_tokens, duration, use_src, mask_info,
+                      prompt_style="full (official H3)"):
         key = (edit_mode, instruction, llm_model, mmproj, thinking, length, seed, asset_notes, video_sample_fps, mask_info,
+               prompt_style,
                bool(audio), use_src, v2v.tensor_sig(src), tuple(v2v.tensor_sig(r) for r in refs),
                v2v.tensor_sig(first))
         if key in self._cache:
@@ -220,7 +227,8 @@ class MiniMaxH3V2VEditLLM:
             duration_seconds=duration, thinking=thinking, length=length, allow_invented_dialogue=False,
             max_tokens=max_tokens, seed=seed, model=llm_model, mmproj=mmproj,
             asset_notes=asset_notes, extra_rules=rules, video_sample_fps=video_sample_fps,
-            video_max_side=512, image_max_side=768, context_size=context_size, print_to_console=True, **kw)
+            video_max_side=512, image_max_side=768, context_size=context_size, print_to_console=True,
+            prompt_style=prompt_style, **kw)
         prompt = out[0]
         if len(self._cache) > 16:
             self._cache.clear()
@@ -232,7 +240,7 @@ class MiniMaxH3V2VEditLLM:
             length, seed, model_patch=None, control_pose=None, control_depth=None, control_edge=None,
             first_frame=None, sam3_model=None, sam3_clip=None, mask_prompt="", mask_invert=False, mask_grow=12,
             mask_threshold=0.5, mask_max_objects=8, mask=None, use_mask=True, hide_masked_in_reference=True, mask_strength=1.0,
-            mask_patch="separate", frame_count=0, audio_vae=None, source_audio=None, reuse_audio=False, asset_notes="",
+            mask_patch="separate", frame_count=0, prompt_style="full (official H3)", audio_vae=None, source_audio=None, reuse_audio=False, asset_notes="",
             prompt_override="", motion_lock=1.0, pose_strength=-1.0, depth_strength=-1.0, edge_strength=-1.0,
             structure_end_percent=-1.0, use_source_as_reference=True, start_seconds=0.0, max_seconds=15.0,
             resolution="768p (native)", ref_image_size="max", video_sample_fps=2.0, unload_llm_after_prompt=False,
@@ -269,7 +277,8 @@ class MiniMaxH3V2VEditLLM:
                 edit_mode=edit_mode, instruction=instruction, llm_model=llm_model, mmproj=mmproj,
                 thinking=thinking, length=length, seed=seed, src=src, refs=refs, first=first, audio=audio,
                 asset_notes=asset_notes, video_sample_fps=video_sample_fps, context_size=context_size,
-                max_tokens=max_tokens, duration=tl.duration, use_src=use_source_as_reference, mask_info=mask_info)
+                max_tokens=max_tokens, duration=tl.duration, use_src=use_source_as_reference, mask_info=mask_info,
+                prompt_style=prompt_style)
             if unload_llm_after_prompt:
                 managed_server.stop(_CFG)
 

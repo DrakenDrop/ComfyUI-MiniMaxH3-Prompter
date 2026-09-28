@@ -359,3 +359,53 @@ def clean_output(text: str, keep_timed_beats: bool = False) -> str:
     for f in R2V_FIELDS[1:]:
         t = re.sub(r"\s*\n\s*" + f + r":", "\n\n" + f + ":", t)
     return t.strip()
+
+
+# ------------------------------------------------------------------ SIMPLE prompt style
+SYSTEM_PROMPT_SIMPLE = """You turn a user's request into a SHORT prompt for MiniMax H3, an audiovisual video model.
+
+Output 1-3 plain English sentences and nothing else: no headings, no section names, no lists, no [Shot N], no timestamps, no markdown, no notes.
+
+Rules:
+- Describe ONLY what the request changes or asks for, concretely (e.g. for clothing: garment type, color, material, cut, length, details). Do not describe anything else.
+- Never describe motion, gestures, expressions, camera, lighting, mood or sound, and never use words like cinematic, dramatic, moody, glowing, golden.
+- Use the asset labels exactly as given (<Picture N>, <Video N>, <Audio N>) when the request uses them, e.g. "the dress from <Picture 1>".
+- The user may write in any language; answer in English. Keep any quoted dialogue verbatim inside <d>[Language] ...</d>.
+- Do not invent anything the request does not ask for."""
+
+
+def build_simple_text(*, instruction: str, task: str, pictures: list[str], videos: list[str], audios: list[str],
+                      asset_notes: str = "", extra_rules: str = "") -> str:
+    lines = ["REQUEST", instruction.strip() or "(no instruction)"]
+    if asset_notes.strip():
+        lines += ["", "ASSET ROLES", asset_notes.strip()]
+    if pictures or videos or audios:
+        lines += ["", "ASSETS"] + [f"- {x}" for x in (*pictures, *videos, *audios)]
+    if task == "video editing":
+        lines += ["", "This is an edit of <Video 1>: describe only the new/changed element in 1-2 sentences."]
+    if extra_rules.strip():
+        # keep only the short intent of preset/mask rules
+        lines += ["", "CONTEXT (do not repeat it)", extra_rules.strip()]
+    lines += ["", "Write the short prompt now."]
+    return "\n".join(lines)
+
+
+def simple_opener(task: str, has_video: bool, has_audio_reuse: bool = False) -> str | None:
+    """Fixed start of a simple video-edit prompt (prefilled, so the model only writes the change)."""
+    if task == "video editing" and has_video:
+        tag = "[video editing + audio reuse]" if has_audio_reuse else "[video editing]"
+        return f"{tag} The target video is an edited version of <Video 1>: "
+    return None
+
+
+SIMPLE_CLOSER = ("Everything else - the person's identity, face, hair, body, motion, timing, camera, framing, "
+                 "background and lighting - stays exactly as in <Video 1>.")
+
+
+def clean_simple(text: str) -> str:
+    t = _FENCE.sub("", text.strip()).strip()
+    t = re.sub(r"^\s*(here is|here's|prompt:)[^\n]*\n", "", t, flags=re.IGNORECASE)
+    t = re.sub(r"\[Shot \d+\]\s*(At\s+\d{1,2}:\d{2}(?:\.\d+)?,?)?\s*", "", t)
+    t = _strip_inshot_timestamps(t)
+    t = re.sub(r"\s*\n+\s*", " ", t)
+    return re.sub(r"\s{2,}", " ", t).strip()

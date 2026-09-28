@@ -174,6 +174,17 @@ H3 Reference to Video.positive/latent → Add Guide (first_frame, frame_idx 0) �
 
 Gambar yang sama tetap disambung ke `ref_image_N` di node H3 supaya labelnya ada.
 
+## Prompt simpel (prompt_style = simple)
+
+Di prompter dan V2V Edit + LLM ada pilihan **`prompt_style`**:
+
+- **`full (official H3)`** (default): format resmi 6 bagian.
+- **`simple`**: hanya 1–3 kalimat yang menjelaskan **perubahannya saja**, tanpa bagian lain dan tanpa `[Shot]`. Contoh untuk video editing dengan instruction `change her outfit to black dress`:
+
+  > [video editing] The target video is an edited version of `<Video 1>`: she now wears a knee-length black satin slip dress with thin straps. Everything else - the person's identity, face, hair, body, motion, timing, camera, framing, background and lighting - stays exactly as in `<Video 1>`.
+
+  Awal dan akhir kalimatnya tetap (ditulis oleh node), jadi LLM hanya menulis bagian tengah. Frame video tidak dikirim ke LLM, sehingga prosesnya hanya beberapa detik.
+
 ## Lighting berubah setelah edit? (Match Color to Source)
 
 Tanpa mask, H3 menggambar ulang seluruh frame, jadi exposure, white balance, atau pencahayaan bisa sedikit bergeser. Ada dua perbaikan:
