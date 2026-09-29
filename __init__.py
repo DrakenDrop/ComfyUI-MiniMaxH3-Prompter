@@ -5,10 +5,12 @@ import threading
 from .nodes import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS
 from . import nodes_v2v as _v2v
 from . import nodes_i2v as _i2v
+from . import nodes_h3qwen as _h3qwen
 
-NODE_CLASS_MAPPINGS = {**NODE_CLASS_MAPPINGS, **_v2v.NODE_CLASS_MAPPINGS, **_i2v.NODE_CLASS_MAPPINGS}
+NODE_CLASS_MAPPINGS = {**NODE_CLASS_MAPPINGS, **_v2v.NODE_CLASS_MAPPINGS, **_i2v.NODE_CLASS_MAPPINGS,
+                       **_h3qwen.NODE_CLASS_MAPPINGS}
 NODE_DISPLAY_NAME_MAPPINGS = {**NODE_DISPLAY_NAME_MAPPINGS, **_v2v.NODE_DISPLAY_NAME_MAPPINGS,
-                              **_i2v.NODE_DISPLAY_NAME_MAPPINGS}
+                              **_i2v.NODE_DISPLAY_NAME_MAPPINGS, **_h3qwen.NODE_DISPLAY_NAME_MAPPINGS}
 from .h3_prompter import llama_client as _lc
 
 

@@ -132,6 +132,28 @@ V2V Edit + LLM.latent ─────> SamplerCustomAdvanced → VAEDecode (H3 v
 
 Kalau kamu tetap memakai node V2V Edit yang lama, sambungkan `prompt` dari prompter ke `prompt_override`. Labelnya sama (`ref_image` → `<Picture 1..n>`, `first_frame` → `<Picture>` terakhir, sumber → `<Video 1>`). Lewatkan videonya dulu ke Conform Video, supaya kedua node menerima frame yang sama.
 
+## MiniMax H3 + Qwen-Image 2.1 Keyframe Video Edit (node baru)
+
+Qwen-Image 2.1 mengedit beberapa **keyframe**, lalu H3 membuat seluruh video melewati keyframe itu. Kualitas edit dari Qwen, kehalusan gerak dan konsistensi antar-frame dari H3. Node ini berdiri sendiri (tidak memakai node V2V Edit).
+
+1. Video sumber → timeline H3 (24 fps, 17k+5) + kanvas (`resolution`, aspek ikut video).
+2. Keyframe diambil tiap `keyframe_every_seconds` (+ frame terakhir kalau `include_last_frame`).
+3. Qwen-Image 2.1 mengedit keyframe 0 dari instruction (+ `ref_image_1..4`, mis. foto dress). Keyframe lain diedit dengan keyframe 0 yang sudah jadi sebagai referensi (`<image2>`), supaya tampilannya sama di semua keyframe. Setting resmi: 25 step, CFG 1, euler / simple. Hasil edit di-cache: mengubah setting H3 tidak mengulang Qwen.
+4. Prompt H3: `LLM simple` (default), `LLM full`, atau `template (no LLM)`.
+5. H3 Reference to Video (`<Video 1>` = sumber, ref, keyframe 0 = `<Picture>` terakhir) + **Add Guide di setiap indeks keyframe** + Fun ControlNet pose (0.9) / depth (0) / edge (0).
+
+Jumlah edit Qwen (dengan frame terakhir):
+
+| video | tiap 2 s | tiap 2,5 s (default) | tiap 3 s | tiap 5 s |
+|---|---|---|---|---|
+| 5 s | 4 | 3 | 3 | 2 |
+| 10 s | 6 | 5 | 4 | 3 |
+| 15 s | 9 | 7 | 6 | 4 |
+
+Butuh ComfyUI 0.37.0+ (node `Text Encode Qwen Image 2.1`). Model Qwen dimuat dengan loader biasa (UNETLoader / CLIPLoader / VAELoader) → `qwen_model`, `qwen_clip`, `qwen_vae`. `qwen_prompt` (opsional, bahasa Inggris) dipakai untuk Qwen; kalau kosong, `instruction` yang dipakai.
+
+Output: `model`, `positive`, `latent` → BasicGuider / BasicScheduler / SamplerCustomAdvanced (denoise 1.0). `edited_keyframes` dan `source_keyframes` untuk preview, `keyframe_indices` = frame mana saja yang dikunci. Audio: sambungkan audio video sumber langsung ke Create Video.
+
 ## MiniMax H3 Image(+Audio) to Video + LLM (satu node untuk I2V)
 
 Gambar (+ audio, mis. .mp3 dari Load Audio) → prompt dari LLM → H3 Reference to Video + Add Guide, dalam satu node.
