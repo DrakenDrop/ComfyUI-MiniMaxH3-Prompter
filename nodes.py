@@ -358,6 +358,9 @@ class MiniMaxH3R2VPrompter:
             kw, frames, kw.get("video_sample_fps", 2.0), kw.get("video_max_side", 512),
             kw.get("image_max_side", 768))
 
+        if pics and frame_anchor.startswith("reference 1 = first frame"):
+            pics[0] = (pics[0].replace("reference still image", "still image that is the exact FIRST FRAME of the "
+                                       "target video").replace(" - a separate image, NOT a frame of any video", ""))
         if kw.get("describe_refs", True) and kw.get("_pic_urls") and not kw.get("_text_only"):
             captions = self._describe_pictures(server_url, model_alias, kw["_pic_urls"], instruction,
                                                int(seed), float(_CFG.get("request_timeout_seconds", 600)))

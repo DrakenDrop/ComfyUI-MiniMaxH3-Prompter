@@ -28,6 +28,7 @@ CATEGORY = "MiniMax H3/Image to Video"
 _CFG = prompter_nodes._CFG
 
 SAME_AS_IMAGE = "same as image"
+MAX_IMAGES = 9  # H3 limit for reference images
 ASPECTS = [SAME_AS_IMAGE, "9:16", "16:9", "1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "21:9", "9:21"]
 RESOLUTIONS = ["768p (native)", "480p", "576p", "640p", "704p", "512p"]
 
@@ -119,7 +120,8 @@ class MiniMaxH3I2VLLM:
             "required": {
                 "clip": ("CLIP", {"tooltip": "MiniMax H3 text encoder (CLIPLoader type 'minimax')."}),
                 "vae": ("VAE", {"tooltip": "MiniMax H3 video VAE."}),
-                "image": ("IMAGE", {"tooltip": "The image (first image of a batch is used)."}),
+                "image": ("IMAGE", {"tooltip": "Image 1 -> <Picture 1>: the first frame (first_image_as_first_frame) and the "
+                                               "image 'same as image' takes the aspect ratio from."}),
                 "instruction": ("STRING", {"multiline": True, "default": "",
                                            "tooltip": "What happens in the video (any language). Say what the audio "
                                                       "is, e.g. 'she sings the song in Audio 1', 'he talks'."}),
@@ -142,7 +144,7 @@ class MiniMaxH3I2VLLM:
                     "tooltip": "On = the audio IS the video's sound, used exactly from 0 s (lip-sync / rhythm). "
                                "Off = only a reference (voice timbre / music style); H3 makes new sound.",
                 }),
-                "image_as_first_frame": ("BOOLEAN", {
+                "first_image_as_first_frame": ("BOOLEAN", {
                     "default": True,
                     "tooltip": "On = the video starts exactly on the image (cropped to the aspect). Off = the image is "
                                "only a reference (person/outfit/style); H3 frames a new shot in the chosen aspect.",
@@ -166,6 +168,11 @@ class MiniMaxH3I2VLLM:
                 "context_size": ("INT", {"default": int(_CFG.get("context_size", 32768)), "min": 4096,
                                          "max": 262144, "step": 1024}),
                 "max_tokens": ("INT", {"default": 2048, "min": 256, "max": 32768, "step": 64}),
+                **{f"image_{i}": ("IMAGE", {
+                    "tooltip": f"Extra reference {i} (person / outfit / object / place / style) -> <Picture {i}> "
+                               "(connected images are numbered in order). Any aspect ratio: references are NOT cropped; "
+                               "only the first image is cropped when it is the first frame."})
+                   for i in range(2, MAX_IMAGES + 1)},
             },
         }
 
@@ -188,10 +195,10 @@ class MiniMaxH3I2VLLM:
         return 124, "default 5 s"
 
     def run(self, clip, vae, image, instruction, llm_model, mmproj, thinking, length, seed, resolution, aspect_ratio,
-            audio_vae=None, audio=None, audio_is_soundtrack=True, image_as_first_frame=True, duration_seconds=0.0,
+            audio_vae=None, audio=None, audio_is_soundtrack=True, first_image_as_first_frame=True, duration_seconds=0.0,
             frame_count=0, shots="auto", allow_invented_dialogue=False, asset_notes="", prompt_override="",
             prompt_style="full (official H3)", ref_image_size="match", describe_refs=True,
-            unload_llm_after_prompt=False, context_size=32768, max_tokens=2048):
+            unload_llm_after_prompt=False, context_size=32768, max_tokens=2048, **more):
         if h3 is None:
             raise RuntimeError(f"needs a ComfyUI with native MiniMax H3 nodes. Import error: {_H3_IMPORT_ERROR}")
 
@@ -200,6 +207,8 @@ class MiniMaxH3I2VLLM:
         seconds = frames / v2v.H3_FPS
         img = image[:1, ..., :3]
         framed = v2v.resize_frames(img, width, height)  # exactly what frame 0 will look like
+        extra = [more[f"image_{i}"][:1, ..., :3] for i in range(2, MAX_IMAGES + 1) if more.get(f"image_{i}") is not None]
+        pics = [framed if first_image_as_first_frame else img, *extra]  # <Picture 1..n>
         aud = fit_audio(audio, seconds)
         soundtrack = aud is not None and audio_is_soundtrack
         if aud is not None and audio_vae is None:
@@ -207,7 +216,8 @@ class MiniMaxH3I2VLLM:
                 raise ValueError("audio_is_soundtrack needs the audio_vae input (MiniMax H3 audio VAE).")
             lc.log("I2V: no audio_vae -> the audio only conditions the text encoder.")
         lc.log(f"I2V: {width}x{height} ({resolution}, {aspect_ratio}), {frames} frames = {seconds:.2f}s (from {why})"
-               + (", image = first frame" if image_as_first_frame else ", image = reference only")
+               + (", image 1 = first frame" if first_image_as_first_frame else ", image 1 = reference only")
+               + (f", +{len(extra)} reference image(s)" if extra else "")
                + ("" if aud is None else (", audio = exact soundtrack" if soundtrack else ", audio = reference")))
 
         # ---- prompt ----------------------------------------------------------------------------
@@ -215,8 +225,8 @@ class MiniMaxH3I2VLLM:
         if not prompt:
             prompt = self._write_prompt(
                 instruction=instruction, llm_model=llm_model, mmproj=mmproj, thinking=thinking, length=length,
-                seed=seed, pic=framed if image_as_first_frame else img, audio=aud, soundtrack=soundtrack,
-                first=image_as_first_frame, frames=frames, shots=shots, allow_invented_dialogue=allow_invented_dialogue,
+                seed=seed, pics=pics, audio=aud, soundtrack=soundtrack,
+                first=first_image_as_first_frame, frames=frames, shots=shots, allow_invented_dialogue=allow_invented_dialogue,
                 asset_notes=asset_notes, prompt_style=prompt_style, describe_refs=describe_refs,
                 context_size=context_size, max_tokens=max_tokens, aspect=f"{width}x{height}")
             if unload_llm_after_prompt:
@@ -225,11 +235,11 @@ class MiniMaxH3I2VLLM:
         # ---- H3 conditioning -------------------------------------------------------------------
         positive, latent = _args(h3.MiniMaxH3ReferenceToVideo.execute(
             clip=clip, prompt=prompt, width=width, height=height, length=frames, ref_image_size=ref_image_size,
-            vae=vae, audio_vae=audio_vae, ref_images={"ref_image_0": framed if image_as_first_frame else img},
+            vae=vae, audio_vae=audio_vae, ref_images={f"ref_image_{i}": p for i, p in enumerate(pics)},
             ref_videos=None, ref_video_audios=None,
             ref_audios={"ref_audio_0": aud} if aud is not None else None))[:2]
         guide = {}
-        if image_as_first_frame:
+        if first_image_as_first_frame:
             guide["image"] = framed
         if soundtrack:
             guide["audio"] = aud
@@ -239,10 +249,10 @@ class MiniMaxH3I2VLLM:
 
         return (positive, latent, prompt, framed, aud, int(width), int(height), int(frames), float(v2v.H3_FPS))
 
-    def _write_prompt(self, *, instruction, llm_model, mmproj, thinking, length, seed, pic, audio, soundtrack, first,
+    def _write_prompt(self, *, instruction, llm_model, mmproj, thinking, length, seed, pics, audio, soundtrack, first,
                       frames, shots, allow_invented_dialogue, asset_notes, prompt_style, describe_refs, context_size,
                       max_tokens, aspect):
-        key = (instruction, llm_model, mmproj, thinking, length, seed, v2v.tensor_sig(pic),
+        key = (instruction, llm_model, mmproj, thinking, length, seed, tuple(v2v.tensor_sig(p) for p in pics),
                v2v.tensor_sig(audio["waveform"]) if audio is not None else (), soundtrack, first, frames, shots,
                allow_invented_dialogue, asset_notes, prompt_style, describe_refs)
         if key in self._cache:
@@ -256,6 +266,14 @@ class MiniMaxH3I2VLLM:
         else:
             rules.append("<Picture 1> is a reference only (identity, outfit, style), not a frame: compose a new shot "
                          f"for a {aspect} video.")
+        if len(pics) > 1:
+            others = ", ".join(f"<Picture {i}>" for i in range(2, len(pics) + 1))
+            rules.append(f"{others}: reference images (people, outfits, objects, places or style, as the request "
+                         "says) - not frames; their own aspect ratio and framing do not matter, only what they show. "
+                         "Define what each provides in subject_definitions and give it a retention marker "
+                         "(fully_preserved for a person/object used as is, attribute_transfer for an outfit/attribute "
+                         "put on another subject, weak_reference for style)"
+                         + (", and add 'reference generation' to the task prefix." if first else "."))
         if audio is not None and soundtrack:
             rules.append(
                 "AUDIO: <Audio 1> IS the soundtrack of the target video, used exactly from 0 s (it is anchored). Mark "
@@ -269,14 +287,15 @@ class MiniMaxH3I2VLLM:
                          "marker reference, task prefix gets 'audio reference'; H3 creates the actual sound.")
         simple_opener = simple_closer = None
         if prompt_style.startswith("simple"):
-            tags = ["keyframe completion" if first else "reference generation"]
+            tags = ["keyframe completion", "reference generation"] if (first and len(pics) > 1) else \
+                ["keyframe completion" if first else "reference generation"]
             if audio is not None:
                 tags.append("audio reuse" if soundtrack else "audio reference")
             simple_opener = (f"[{' + '.join(tags)}] "
                              + ("The shot begins from <Picture 1>: " if first else "<Subject 1> from <Picture 1>: "))
             simple_closer = ("The sound is <Audio 1>, reused exactly; lips and motion follow it." if soundtrack else
                              ("The voice/music follows the style of <Audio 1>." if audio is not None else ""))
-        kw = {"image_1": pic}
+        kw = {f"image_{i}": p for i, p in enumerate(pics, start=1)}
         if audio is not None:
             kw["audio_1"] = audio
         out = prompter_nodes.MiniMaxH3R2VPrompter().generate(
