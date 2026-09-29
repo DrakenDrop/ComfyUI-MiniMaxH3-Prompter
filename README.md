@@ -132,6 +132,37 @@ V2V Edit + LLM.latent ─────> SamplerCustomAdvanced → VAEDecode (H3 v
 
 Kalau kamu tetap memakai node V2V Edit yang lama, sambungkan `prompt` dari prompter ke `prompt_override`. Labelnya sama (`ref_image` → `<Picture 1..n>`, `first_frame` → `<Picture>` terakhir, sumber → `<Video 1>`). Lewatkan videonya dulu ke Conform Video, supaya kedua node menerima frame yang sama.
 
+## MiniMax H3 Image(+Audio) to Video + LLM (satu node untuk I2V)
+
+Gambar (+ audio, mis. .mp3 dari Load Audio) → prompt dari LLM → H3 Reference to Video + Add Guide, dalam satu node.
+
+- **resolution**: `768p (native)` (sisi pendek 768, maks 768×1344) atau `480p` (maks 480×832), plus 512/576/640/704p.
+- **aspect_ratio**: `same as image` (ikut aspek gambar input), `9:16`, `16:9`, `1:1`, `2:3`, `3:2`, `3:4`, `4:3`, `4:5`, `5:4`, `21:9`, `9:21`. Ukuran selalu kelipatan 32 dan dibatasi luas maksimal H3:
+
+  | aspek | 768p | 480p |
+  |---|---|---|
+  | 9:16 / 16:9 | 768×1344 | 480×832 |
+  | 1:1 | 768×768 | 480×480 |
+  | 2:3 / 3:2 | 768×1152 | 480×704 |
+  | 3:4 / 4:3 | 768×1024 | 480×640 |
+  | 4:5 / 5:4 | 768×960 | 480×608 |
+  | 21:9 / 9:21 | 1536×672 | 960×416 |
+
+- **image_as_first_frame** (default on): video dimulai persis dari gambar. Kalau aspeknya beda dengan gambar, gambar di-crop di tengah (output `first_frame` menunjukkan hasil crop-nya, dan itu juga yang dilihat LLM). Off = gambar hanya referensi (orang/baju/gaya), H3 membuat framing baru sesuai aspek, tanpa crop.
+- **audio_is_soundtrack** (default on): audio = suara video itu sendiri, dipasang persis mulai 0 s (Add Guide audio), jadi bibir/gerak mengikuti audio. Prompt memberi `<Audio 1>` marker `fully_copy` + `audio reuse`. Off = audio hanya referensi (timbre suara / gaya musik), H3 membuat suaranya sendiri. Butuh **audio_vae**.
+- **Panjang video**: default ikut panjang audio (dibulatkan ke atas ke grid 17k+5, maks 15,08 s; audio yang lebih panjang dipotong). Tanpa audio: 5 s. `duration_seconds` atau `frame_count` untuk mengatur manual.
+- Tulis di **instruction** apa isi audionya, karena LLM tidak bisa mendengar: "dia menyanyikan lagu di Audio 1", "dia berbicara", "dia menari mengikuti musik".
+- Output **audio** = audio yang sudah dipotong/ditambah hening sepanjang video → sambungkan ke Create Video.
+
+```
+Load Image ─> image            Load Audio (.mp3) ─> audio
+CLIPLoader (minimax) ─> clip   VAELoader (video) ─> vae   VAELoader (audio) ─> audio_vae
+I2V + LLM.positive ─> BasicGuider (model = H3 ref2va + ModelSamplingMiniMaxH3)
+I2V + LLM.latent ─> SamplerCustomAdvanced → VAEDecode → CreateVideo (fps 24, audio = I2V + LLM.audio)
+```
+
+Node kecil **MiniMax H3 Resolution / Aspect Ratio** memberi `width` / `height` (dan gambar yang sudah di-crop) dengan aturan yang sama, untuk dipakai dengan node H3 resmi.
+
 ## Storyboard otomatis dari prompt sederhana (shots + timed_beats)
 
 Cukup tulis prompt singkat, misalnya `kucing melompat ke meja lalu tidur`. Prompter yang menyusun storyboard-nya:

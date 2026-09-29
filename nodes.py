@@ -400,7 +400,8 @@ class MiniMaxH3R2VPrompter:
                 first_frame_label=kw.get("_ff_label"))
             system_text = prompts.SYSTEM_PROMPT_SIMPLE
             parts = _drop_video_parts(parts)  # the change is described from the request/pictures only -> faster
-            opener = prompts.simple_opener(task, bool(vids), any("synchronized audio track" in a for a in auds))
+            opener = kw.get("simple_opener") or prompts.simple_opener(
+                task, bool(vids), any("synchronized audio track" in a for a in auds))
             prefill = opener
             max_tokens = min(int(max_tokens), 400)
         if kw.get("_text_only"):
@@ -452,7 +453,10 @@ class MiniMaxH3R2VPrompter:
                 body = body.rstrip()
                 if body and body[-1] not in ".!?":
                     body += "."
-                prompt = opener + body + " " + prompts.simple_closer(kw.get("edit_mode", ""))
+                closer = kw.get("simple_closer")
+                if closer is None:
+                    closer = prompts.simple_closer(kw.get("edit_mode", ""))
+                prompt = (opener + body + (" " + closer if closer else "")).strip()
         else:
             prompt = prompts.clean_output(
                 content, keep_timed_beats=bool(kw.get("timed_beats", False)) and task != "video editing")
